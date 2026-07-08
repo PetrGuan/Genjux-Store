@@ -90,8 +90,11 @@ impl GitHubSearchClient {
         self
     }
 
+    /// Overrides the search API base URL. Only exposed under `#[cfg(test)]`
+    /// (`pub(crate)` so other modules' tests, like `api.rs`'s, can point
+    /// this client at a wiremock server too — not part of the public API).
     #[cfg(test)]
-    fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+    pub(crate) fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
     }
@@ -246,7 +249,7 @@ pub struct RecommendedApp {
 /// rate limiting us, every subsequent per-candidate fetch would fail the
 /// same way, so it's propagated immediately instead of being silently
 /// swallowed candidate-by-candidate.
-pub async fn discover_recommended<P: SourceProvider>(
+pub async fn discover_recommended<P: SourceProvider + ?Sized>(
     search_client: &GitHubSearchClient,
     source_provider: &P,
     topics: &[&str],

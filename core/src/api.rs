@@ -18,6 +18,10 @@
 //! issued/shared by whatever process starts this server.
 
 use crate::audit::AuditLog;
+use crate::classify::Platform;
+use crate::discovery::{
+    DiscoveryCache, GitHubSearchClient, InMemoryDiscoveryCache, RecommendedApp,
+};
 use crate::orchestrate::{run_install, InstallStage, PlatformAdapter};
 use crate::package::classify_release;
 use crate::registry::InstalledAppRegistry;
@@ -30,6 +34,26 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// How long a discovered recommended-software list stays valid before the
+/// next request re-runs the search+classify pipeline (PLAN.md section
+/// 6.1). 24 hours, matching the section's own suggested default.
+const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Topics queried per platform for the recommended-software feed (#54/#55).
+/// Deliberately small and easy to tune later — the quality gate that
+/// actually matters (an asset must really classify as installable for the
+/// platform) lives in [`crate::discovery::discover_recommended`], not here.
+fn default_discovery_topics(platform: Platform) -> &'static [&'static str] {
+    match platform {
+        Platform::MacOS => &["macos", "macos-app", "menu-bar-app"],
+        Platform::Windows => &["windows", "windows-app"],
+        Platform::Linux => &["linux", "linux-app"],
+        Platform::Android => &["android", "android-app"],
+    }
+}
+
 /// Shared state behind every route, and reused as-is by the MCP server
 /// (#17) so both surfaces see identical data.
 pub struct AppState {
@@ -45,6 +69,8 @@ pub struct AppState {
     /// actually installed.
     installs: Mutex<HashMap<String, InstallStage>>,
     next_install_id: AtomicU64,
+    discovery_search_client: GitHubSearchClient,
+    discovery_cache: Arc<dyn DiscoveryCache>,
 }
 
 impl AppState {
@@ -63,7 +89,23 @@ impl AppState {
             install_dir,
             installs: Mutex::new(HashMap::new()),
             next_install_id: AtomicU64::new(1),
+            discovery_search_client: GitHubSearchClient::from_env(),
+            discovery_cache: Arc::new(InMemoryDiscoveryCache::new(DISCOVERY_CACHE_TTL)),
         }
+    }
+
+    /// Overrides the discovery search client and/or cache — used by tests
+    /// to point the search step at a mock server and/or use a short-TTL
+    /// cache, without changing every other `AppState::new` call site.
+    #[cfg(test)]
+    fn with_discovery(
+        mut self,
+        search_client: GitHubSearchClient,
+        cache: Arc<dyn DiscoveryCache>,
+    ) -> Self {
+        self.discovery_search_client = search_client;
+        self.discovery_cache = cache;
+        self
     }
 
     fn allocate_install_id(&self) -> String {
@@ -86,6 +128,34 @@ impl AppState {
             .await?
             .ok_or(GetPackagesError::NoReleases)?;
         Ok(classify_release(&release))
+    }
+
+    /// Returns the recommended-software feed for `platform` (#54/#55),
+    /// serving from the TTL cache when available rather than re-running
+    /// the (multi-repo-fetching) discovery pipeline on every call.
+    pub async fn discover(
+        &self,
+        platform: Platform,
+    ) -> Result<Vec<RecommendedApp>, crate::discovery::DiscoveryError> {
+        let cache_key = platform.as_str();
+        if let Some(cached) = self.discovery_cache.get(cache_key).await {
+            return Ok(cached);
+        }
+
+        let topics = default_discovery_topics(platform);
+        let recommended = crate::discovery::discover_recommended(
+            &self.discovery_search_client,
+            &*self.source,
+            topics,
+            platform,
+            25,
+        )
+        .await?;
+
+        self.discovery_cache
+            .put(cache_key, recommended.clone())
+            .await;
+        Ok(recommended)
     }
 
     pub async fn list_installed(
@@ -195,6 +265,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/repos/:owner/:repo/packages", get(get_packages))
+        .route("/discover/:platform", get(discover_platform))
         .route("/installed", get(list_installed))
         .route("/updates", get(get_updates))
         .route("/install", post(start_install))
@@ -230,6 +301,26 @@ async fn get_packages(
             }
             _ => (StatusCode::BAD_GATEWAY, e.to_string()),
         })
+}
+
+async fn discover_platform(
+    State(state): State<Arc<AppState>>,
+    AxumPath(platform): AxumPath<String>,
+) -> Result<Json<Vec<RecommendedApp>>, (StatusCode, String)> {
+    let platform: Platform =
+        platform
+            .parse()
+            .map_err(|e: crate::classify::ParsePlatformError| {
+                (StatusCode::BAD_REQUEST, e.to_string())
+            })?;
+
+    state.discover(platform).await.map(Json).map_err(|e| {
+        let status = match &e {
+            crate::discovery::DiscoveryError::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        (status, e.to_string())
+    })
 }
 
 async fn list_installed(
@@ -592,5 +683,196 @@ mod tests {
         assert_eq!(updates.len(), 1);
         assert!(updates[0].update_available);
         assert_eq!(updates[0].latest_tag, "v2.0.0");
+    }
+
+    fn discovery_search_response(items: &[(&str, &str, u64)]) -> serde_json::Value {
+        serde_json::json!({
+            "total_count": items.len(),
+            "incomplete_results": false,
+            "items": items.iter().map(|(owner, repo, stars)| {
+                serde_json::json!({
+                    "name": repo,
+                    "owner": { "login": owner },
+                    "stargazers_count": stars,
+                    "description": null,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+
+    async fn test_state_with_discovery(
+        search_server_uri: String,
+        provider: MockProvider,
+    ) -> Arc<AppState> {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = JsonFileRegistry::open(tmp.path().join("registry.json"))
+            .await
+            .unwrap();
+        let audit_log = JsonlAuditLog::new(tmp.path().join("audit.jsonl"));
+
+        let state = AppState::new(
+            Arc::new(provider),
+            Arc::new(registry),
+            Arc::new(audit_log),
+            Arc::new(NoopAdapter),
+            tmp.path().join("installs"),
+        )
+        .with_discovery(
+            crate::discovery::GitHubSearchClient::new().with_base_url(search_server_uri),
+            Arc::new(crate::discovery::InMemoryDiscoveryCache::new(
+                Duration::from_secs(60),
+            )),
+        );
+        // Keep the temp dir alive for the process lifetime of the test by
+        // leaking it — these are short-lived unit test processes, and
+        // `test_state_with_release` above already returns the TempDir to
+        // its caller for the same reason; here it's simpler to just leak
+        // since no test needs to inspect the directory afterward.
+        std::mem::forget(tmp);
+        Arc::new(state)
+    }
+
+    #[tokio::test]
+    async fn discover_endpoint_returns_only_installable_candidates_for_the_platform() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let search_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(discovery_search_response(&[
+                    ("alice", "mac-app", 500),
+                    ("bob", "linux-only", 100),
+                ])),
+            )
+            .mount(&search_server)
+            .await;
+
+        let provider = MockProvider::new()
+            .with_releases(
+                RepoRef::new("mock", "alice", "mac-app"),
+                vec![Release {
+                    tag: "v1.0.0".to_string(),
+                    assets: vec![ReleaseAsset {
+                        name: "app-x86_64-apple-darwin.tar.gz".to_string(),
+                        size_bytes: 1,
+                        download_url: "https://example.invalid/a".to_string(),
+                        content_type: None,
+                    }],
+                }],
+            )
+            .with_releases(
+                RepoRef::new("mock", "bob", "linux-only"),
+                vec![Release {
+                    tag: "v1.0.0".to_string(),
+                    assets: vec![ReleaseAsset {
+                        name: "app_amd64.deb".to_string(),
+                        size_bytes: 1,
+                        download_url: "https://example.invalid/b".to_string(),
+                        content_type: None,
+                    }],
+                }],
+            );
+
+        let state = test_state_with_discovery(search_server.uri(), provider).await;
+        let router = build_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/discover/macos")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let recommended: Vec<crate::discovery::RecommendedApp> =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(recommended.len(), 1);
+        assert_eq!(recommended[0].owner, "alice");
+    }
+
+    #[tokio::test]
+    async fn discover_endpoint_rejects_an_unknown_platform_with_bad_request() {
+        let state = test_state_with_discovery(
+            "http://127.0.0.1:1".to_string(), // never actually reached
+            MockProvider::new(),
+        )
+        .await;
+        let router = build_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/discover/plan9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn discover_endpoint_serves_the_second_request_from_cache() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let search_server = MockServer::start().await;
+        // macOS discovery queries 3 topics (macos/macos-app/menu-bar-app —
+        // see default_discovery_topics), so a single discover() call makes
+        // 3 search requests. `.expect(3)` fails the test (on drop) if the
+        // search endpoint is hit more than 3 times total across both HTTP
+        // calls below — proving the second /discover/macos request is
+        // actually served from the TTL cache, not just documented as such.
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(discovery_search_response(&[("alice", "mac-app", 500)])),
+            )
+            .expect(3)
+            .mount(&search_server)
+            .await;
+
+        let provider = MockProvider::new().with_releases(
+            RepoRef::new("mock", "alice", "mac-app"),
+            vec![Release {
+                tag: "v1.0.0".to_string(),
+                assets: vec![ReleaseAsset {
+                    name: "app-arm64.dmg".to_string(),
+                    size_bytes: 1,
+                    download_url: "https://example.invalid/a".to_string(),
+                    content_type: None,
+                }],
+            }],
+        );
+
+        let state = test_state_with_discovery(search_server.uri(), provider).await;
+        let router = build_router(state);
+
+        for _ in 0..2 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/discover/macos")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        // Dropping the MockServer verifies the `.expect(3)` assertion.
+        drop(search_server);
     }
 }
