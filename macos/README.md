@@ -45,6 +45,13 @@ cd ..
 xcodegen generate
 ```
 
+## Known environment issues (this dev environment, not code defects)
+
+A few things have been observed in the specific sandboxed environment this project has been developed in that are **not** Genjux-Store bugs, documented here so they aren't re-investigated as if they were:
+
+- **Screen capture / accessibility tooling broke mid-session** (`screencapture`, System Events/AppleScript window queries) — confirmed environment-wide (even Finder/Terminal windows render as blank wallpaper), not app-specific. Since then, GUI verification has relied on successful builds, passing automated tests, and structural code review rather than screenshots.
+- **`genjuxd` can hang mid-launch when spawned from an XCTest host process specifically.** Isolated with `sample` to dyld's own on-disk binary-loading path (`dyld4::JustInTimeLoader::makeLaunchLoader` → `open()`, never reaching `main()`). Reproduced identically regardless of stdio configuration (`Pipe` vs `FileHandle.nullDevice`) and regardless of whether Xcode/XCTest-injection environment variables are stripped from the child's environment (see the comment in `ServiceLifecycle.swift`'s `spawnGenjuxd()`). Did **not** reproduce spawning the same binary from a plain, non-XCTest Swift process, from a shell, or from the real packaged `.app` launched normally (verified: the packaged app's embedded `genjuxd` starts and answers `/health` correctly). This points to process-launch interference specific to this environment (likely local security/monitoring tooling scrutinizing subprocess launches from instrumented test hosts), not a Genjux-Store defect — it does not affect real end users running the shipped app.
+
 ## Distribution
 
 Genjux-Store ships via direct download (notarized), not the Mac App Store — see [`DISTRIBUTION.md`](DISTRIBUTION.md) for the full local build → sign → notarize → staple → package pipeline (`macos/scripts/build-release.sh`).
