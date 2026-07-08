@@ -10,13 +10,15 @@ final class AppCardItem: NSCollectionViewItem {
     private let installButton = NSButton(title: "Install", target: nil, action: nil)
     private let detailsButton = NSButton(title: "Details", target: nil, action: nil)
 
-    private var owner: String?
-    private var repo: String?
     private var app: RecommendedApp?
 
     /// Called when the user taps "Details" — `HomeViewController` wires
     /// this to open the App detail screen (#62) for this card's app.
     var onDetailsTapped: ((RecommendedApp) -> Void)?
+
+    /// Called when the user taps "Install" — `HomeViewController` wires
+    /// this to open the Install progress screen (#63) for this card's app.
+    var onInstallTapped: ((RecommendedApp) -> Void)?
 
     override func loadView() {
         let container = NSView()
@@ -80,8 +82,6 @@ final class AppCardItem: NSCollectionViewItem {
     /// as `UICollectionViewCell` reuse on iOS.
     func configure(with app: RecommendedApp) {
         self.app = app
-        owner = app.owner
-        repo = app.repo
         nameLabel.stringValue = "\(app.owner)/\(app.repo)"
         starsLabel.stringValue = "\u{2605} \(formattedStarCount(app.stars))"
         descriptionLabel.stringValue = app.description ?? ""
@@ -92,17 +92,10 @@ final class AppCardItem: NSCollectionViewItem {
     }
 
     @objc private func installTapped() {
-        // The full install-orchestration UI lands in #63; for now, just
-        // confirm the button is correctly wired to *this* card's app
-        // rather than shipping it as inert, misleading UI.
-        guard let owner, let repo else {
+        guard let app else {
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "Install \(owner)/\(repo)"
-        alert.informativeText = "The install flow isn't implemented yet — see issue #63."
-        alert.alertStyle = .informational
-        alert.runModal()
+        onInstallTapped?(app)
     }
 
     @objc private func detailsTapped() {

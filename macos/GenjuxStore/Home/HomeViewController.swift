@@ -16,6 +16,10 @@ final class HomeViewController: NSViewController {
     /// wires this to open the App detail screen (#62) for that app.
     var onAppSelected: ((RecommendedApp) -> Void)?
 
+    /// Called when the user taps "Install" on a card — `RootViewController`
+    /// wires this to open the Install progress screen (#63) for that app.
+    var onInstallRequested: ((RecommendedApp) -> Void)?
+
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
     }
@@ -130,6 +134,9 @@ extension HomeViewController: NSCollectionViewDataSource {
             cardItem.configure(with: apps[indexPath.item])
             cardItem.onDetailsTapped = { [weak self] app in
                 self?.onAppSelected?(app)
+            }
+            cardItem.onInstallTapped = { [weak self] app in
+                self?.onInstallRequested?(app)
             }
         }
         return item

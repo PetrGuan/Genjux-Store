@@ -75,3 +75,80 @@ struct RepoMetadata: Codable, Equatable {
     let lastReleaseAt: String?
     let readmeExcerpt: String?
 }
+
+/// Mirrors `genjux_core::orchestrate::InstallStage` (#11) — one stage of
+/// an in-progress (or finished) install, polled by the Install progress
+/// screen (#63). The Rust enum is `#[serde(tag = "stage")]`
+/// (internally-tagged: `{"stage": "Resolving"}` for unit variants,
+/// `{"stage": "Downloading", "bytes_downloaded": ..., ...}` for variants
+/// with fields) — Swift's auto-synthesized `Codable` for enums with
+/// associated values doesn't produce that shape, so this has a hand-written
+/// `init(from:)` instead of relying on synthesis.
+enum InstallStage: Equatable {
+    case resolving
+    case downloading(bytesDownloaded: UInt64, totalBytes: UInt64?)
+    /// `matchedPublishedChecksum` is `false` when the core only had a
+    /// self-computed hash to show the user (no official checksum existed
+    /// to compare against) — per the trust model in PLAN.md section 5,
+    /// that's a fact to disclose, not something to gloss over as success.
+    case verified(sha256: String, matchedPublishedChecksum: Bool)
+    case installing
+    case succeeded
+    case failed(reason: String)
+
+    var isTerminal: Bool {
+        switch self {
+        case .succeeded, .failed:
+            return true
+        case .resolving, .downloading, .verified, .installing:
+            return false
+        }
+    }
+}
+
+extension InstallStage: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case stage
+        case bytesDownloaded = "bytes_downloaded"
+        case totalBytes = "total_bytes"
+        case sha256
+        case matchedPublishedChecksum = "matched_published_checksum"
+        case reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let stage = try container.decode(String.self, forKey: .stage)
+        switch stage {
+        case "Resolving":
+            self = .resolving
+        case "Downloading":
+            self = .downloading(
+                bytesDownloaded: try container.decode(UInt64.self, forKey: .bytesDownloaded),
+                totalBytes: try container.decodeIfPresent(UInt64.self, forKey: .totalBytes)
+            )
+        case "Verified":
+            self = .verified(
+                sha256: try container.decode(String.self, forKey: .sha256),
+                matchedPublishedChecksum: try container.decode(Bool.self, forKey: .matchedPublishedChecksum)
+            )
+        case "Installing":
+            self = .installing
+        case "Succeeded":
+            self = .succeeded
+        case "Failed":
+            self = .failed(reason: try container.decode(String.self, forKey: .reason))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .stage,
+                in: container,
+                debugDescription: "unrecognized install stage: \(stage)"
+            )
+        }
+    }
+}
+
+/// Mirrors `core::api::InstallStarted` (core/src/api.rs).
+struct InstallStarted: Decodable {
+    let installId: String
+}

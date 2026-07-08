@@ -6,14 +6,18 @@ import Cocoa
 /// scoped to what's knowable *before* download (stars, publisher
 /// activity via last-release date): signature/notarization status and
 /// checksum verification results (PLAN.md section 5) only become known
-/// *during* an actual download+verify, which is #63's job, not this
-/// screen's. Built entirely in code, no Storyboards/XIBs.
+/// *during* an actual download+verify, which the Install progress screen
+/// (#63) surfaces. Built entirely in code, no Storyboards/XIBs.
 final class AppDetailViewController: NSViewController {
     private let app: RecommendedApp
 
     /// Called when the user taps "Back to recommended" — wired by
     /// `RootViewController` to switch back to the Home screen.
     var onBackTapped: (() -> Void)?
+
+    /// Called when the user taps "Install" — wired by
+    /// `RootViewController` to open the Install progress screen (#63).
+    var onInstallTapped: ((RecommendedApp) -> Void)?
 
     private let backButton = NSButton(title: "\u{2190} Recommended", target: nil, action: nil)
     private let nameLabel = NSTextField(labelWithString: "")
@@ -120,15 +124,7 @@ final class AppDetailViewController: NSViewController {
     }
 
     @objc private func installTapped() {
-        // Full install orchestration UI lands in #63; for now, confirm
-        // the button is wired to this app rather than shipping it as
-        // dead/misleading UI (same placeholder convention as the Home
-        // screen's card Install button, #60).
-        let alert = NSAlert()
-        alert.messageText = "Install \(app.owner)/\(app.repo)"
-        alert.informativeText = "The install flow isn't implemented yet — see issue #63."
-        alert.alertStyle = .informational
-        alert.runModal()
+        onInstallTapped?(app)
     }
 
     private func loadMetadata() async {

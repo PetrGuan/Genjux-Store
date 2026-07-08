@@ -101,6 +101,37 @@ actor CoreServiceClient {
         try await get("/repos/\(owner)/\(repo)/metadata", as: RepoMetadata.self)
     }
 
+    /// Calls `POST /install` (#11/#16) — starts a real install and
+    /// returns its install id, which `installStatus(id:)` polls. Backs
+    /// the Install progress screen (#63).
+    func startInstall(owner: String, repo: String) async throws -> String {
+        struct InstallRequest: Encodable {
+            let owner: String
+            let repo: String
+        }
+
+        let info = try await serviceInfo()
+        var request = URLRequest(url: baseURL(info).appendingPathComponent("/install"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(info.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(InstallRequest(owner: owner, repo: repo))
+
+        let (data, response) = try await session.data(for: request)
+        try Self.checkResponse(response, data: data)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(InstallStarted.self, from: data).installId
+    }
+
+    /// Calls `GET /installs/:id` (#11/#16) — the latest known stage of a
+    /// previously started install. Backs the Install progress screen
+    /// (#63)'s polling loop.
+    func installStatus(id: String) async throws -> InstallStage {
+        try await get("/installs/\(id)", as: InstallStage.self)
+    }
+
     private static func checkResponse(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             return
