@@ -55,7 +55,7 @@ fn lock_file_path() -> PathBuf {
 /// data" (this always-plain-readable file) sidesteps the platform
 /// difference entirely instead of fighting it with Windows-specific
 /// share-mode flags.
-fn info_file_path() -> PathBuf {
+pub fn info_file_path() -> PathBuf {
     runtime_dir().join("genjuxd.json")
 }
 
@@ -65,6 +65,11 @@ fn info_file_path() -> PathBuf {
 pub struct ServiceInfo {
     pub port: u16,
     pub token: String,
+    /// The OS process ID of the running `genjuxd` instance. Useful for
+    /// diagnostics (and for tests to reliably stop a lazily-started
+    /// instance afterward) — not load-bearing for the lock/discovery
+    /// mechanism itself, which is entirely file-lock based.
+    pub pid: u32,
 }
 
 /// Generates a random, URL-safe local auth token. Uses a real CSPRNG
@@ -328,6 +333,7 @@ mod tests {
         let info = ServiceInfo {
             port: 4242,
             token: "test-token".to_string(),
+            pid: std::process::id(),
         };
         lock_a.publish(&info).unwrap();
 

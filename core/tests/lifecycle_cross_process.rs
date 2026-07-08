@@ -64,6 +64,11 @@ fn a_second_process_finds_the_first_real_genjuxd_process_already_running() {
                 32,
                 "published token should be a real generated token"
             );
+            assert_eq!(
+                info.pid,
+                child.id(),
+                "published pid should match the spawned child"
+            );
             Ok(())
         }
         Ok(AcquireOutcome::Acquired(_)) => {

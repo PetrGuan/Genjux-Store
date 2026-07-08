@@ -94,6 +94,15 @@ impl AppState {
         self.registry.list_installed().await
     }
 
+    /// Compares every installed entry against its source's latest
+    /// release, flagging outdated ones. Used by the CLI's `update`
+    /// command (#20).
+    pub async fn check_for_updates(
+        &self,
+    ) -> Result<Vec<crate::registry::UpdateCheckResult>, crate::registry::UpdateCheckError> {
+        crate::registry::check_for_updates(&*self.registry, &*self.source).await
+    }
+
     /// Starts a background install for `owner/repo`, returning an install
     /// id that [`Self::get_install_status`] can poll. Requires `Arc<Self>`
     /// since the background task holds its own clone of the state.
@@ -187,6 +196,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(health))
         .route("/repos/:owner/:repo/packages", get(get_packages))
         .route("/installed", get(list_installed))
+        .route("/updates", get(get_updates))
         .route("/install", post(start_install))
         .route("/installs/:id", get(get_install_status))
         .with_state(state)
@@ -227,6 +237,16 @@ async fn list_installed(
 ) -> Result<Json<Vec<crate::registry::InstalledEntry>>, (StatusCode, String)> {
     state
         .list_installed()
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+async fn get_updates(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<crate::registry::UpdateCheckResult>>, (StatusCode, String)> {
+    state
+        .check_for_updates()
         .await
         .map(Json)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -528,5 +548,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn updates_endpoint_flags_an_outdated_installed_entry() {
+        let repo = RepoRef::new("mock", "acme", "widget");
+        let (state, _tmp) = test_state_with_release(
+            &repo,
+            Release {
+                tag: "v2.0.0".to_string(),
+                assets: vec![],
+            },
+        )
+        .await;
+        state
+            .registry
+            .record_install(crate::registry::InstalledEntry {
+                repo: repo.clone(),
+                installed_tag: "v1.0.0".to_string(),
+                installed_at_unix: 0,
+                source_url: String::new(),
+            })
+            .await
+            .unwrap();
+
+        let router = build_router(state);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/updates")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let updates: Vec<crate::registry::UpdateCheckResult> =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(updates[0].update_available);
+        assert_eq!(updates[0].latest_tag, "v2.0.0");
     }
 }
