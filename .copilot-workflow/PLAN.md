@@ -97,6 +97,25 @@ Phase 4：**Linux**（GTK4 + libadwaita，可用 gtk-rs 直接在 core 语言内
 
 （开发顺序 macOS → Windows → Android → Linux 已由用户确认。）
 
+### 6.1 Phase 1（macOS GUI）设计补充（已与用户讨论确认）
+
+**MVP 形态**：主窗口 App（类似 App Store 卡片式浏览），而非菜单栏小工具。
+
+**"推荐软件"发现管线（新增 core 能力，`core/src/discovery.rs`）**：
+1. 用 GitHub Search API（`/search/repositories?q=topic:<tag>&sort=stars`）按预设 topic 列表（如 `macos`、`macos-app`、`menu-bar-app` 等，具体清单在实现时定稿）取候选仓库，按 star 数排序。
+2. 复用 Phase 0 已有的 `classify_release` 管线，对每个候选仓库的最新 release 跑分类，**过滤掉没有真正 macOS 可安装资产的候选**（纯库/纯源码仓库会被自然排除）——这是把"发现质量不可控"收窄为"至少保证真的能装"的关键设计。
+3. 结果本地缓存一段时间（如 24 小时 TTL），避免每次启动 GUI 都触发大量 GitHub API 请求（注意 rate limit）。
+4. 对外通过本地 HTTP API 暴露新端点（如 `GET /discover/:platform`），macOS GUI 是这个端点的瘦客户端，不直接调用 GitHub。
+
+**macOS GUI 技术栈**：AppKit，纯命令式风格（不用 SwiftUI、不用 Storyboard/XIB，代码搭 UI），与用户在其他项目一贯的约定一致。通过本地 HTTP API（URLSession）调用 core；首次启动时懒启动 `genjuxd`（复用 CLI 已有的锁文件/发现机制逻辑）。
+
+**MVP 页面范围**：
+- 首页：推荐软件卡片网格（调用 `/discover/macos`）
+- 搜索：输入任意 `owner/repo` 走现有分类/安装管线（不限于推荐列表）
+- 应用详情页：展示 README 摘要、发布时间、star 数、信任信号（签名/公证状态、checksum 校验结果）、安装按钮
+- 安装进度页：复用 core 的安装状态机
+- 已装应用/更新页：复用 core 的 registry + update-check
+
 ### 7. 商业模式（已与用户讨论确认）
 
 **方向：个人版 freemium + 打赏，先做简单**（与你在 Nautilus-HN 的打赏模式一致，可复用产品哲学与部分实现经验）。
