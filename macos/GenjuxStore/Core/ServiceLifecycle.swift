@@ -151,6 +151,26 @@ enum ServiceLifecycle {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        // Process() otherwise inherits this process's *entire* environment
+        // verbatim. When the spawning process is itself an Xcode-injected
+        // XCTest host, that includes DYLD_*/__XPC_DYLD_* library-injection
+        // hints and XCTest*/XPC_SERVICE_NAME bundle-context variables
+        // pointing at libXCTestBundleInject.dylib etc. genjuxd is a plain
+        // Rust binary with no Objective-C runtime for that injected dylib
+        // to hook into, so there's no reason to pass any of it through --
+        // stripping it is defensive hygiene regardless of the parent
+        // process's context. (Note: a real launch-hang was independently
+        // observed in this dev environment when spawning genjuxd from an
+        // XCTest host specifically, isolated via `sample` to dyld's own
+        // on-disk binary loading path -- but it reproduced identically
+        // with or without these variables present, and did not reproduce
+        // spawning the same binary from a plain, non-XCTest Swift process
+        // or from a shell. That points to environment-specific process-launch
+        // interference outside this codebase, not something this filter
+        // fixes -- see the macOS README's "known environment issues" note.)
+        process.environment = ProcessInfo.processInfo.environment.filter { key, _ in
+            !key.contains("DYLD") && !key.hasPrefix("XCTest") && !key.hasPrefix("XPC_")
+        }
 
         do {
             try process.run()

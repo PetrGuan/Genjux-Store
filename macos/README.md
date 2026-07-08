@@ -45,6 +45,10 @@ cd ..
 xcodegen generate
 ```
 
+## Distribution
+
+Genjux-Store ships via direct download (notarized), not the Mac App Store — see [`DISTRIBUTION.md`](DISTRIBUTION.md) for the full local build → sign → notarize → staple → package pipeline (`macos/scripts/build-release.sh`).
+
 ## Status
 
-Phase 1 is functionally complete for the "browse, install, and track" core loop — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the remaining sub-issue checklist (code signing/notarization, end-to-end validation). Landed so far: the initial project scaffold (#58), the local core-service client + lazy-start (#59), the Home screen (#60, a real recommended-macOS-apps card grid backed by `GET /discover/macos`), the Search screen (#61, an `owner/repo` toolbar search field wired to `GET /repos/:owner/:repo/packages`), the App detail screen (#62, README excerpt/star count/last-release date via `GET /repos/:owner/:repo/metadata`), the Install progress screen (#63, a real `POST /install` + `GET /installs/:id` polling loop), the Installed/updates screen (#64, a toolbar-accessible list backed by `GET /installed` + `GET /updates`), and the app icon/branding (#65).
+Phase 1 is functionally complete for the "browse, install, and track" core loop — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the remaining sub-issue checklist (end-to-end validation). Landed so far: the initial project scaffold (#58), the local core-service client + lazy-start (#59), the Home screen (#60, a real recommended-macOS-apps card grid backed by `GET /discover/macos`), the Search screen (#61, an `owner/repo` toolbar search field wired to `GET /repos/:owner/:repo/packages`), the App detail screen (#62, README excerpt/star count/last-release date via `GET /repos/:owner/:repo/metadata`), the Install progress screen (#63, a real `POST /install` + `GET /installs/:id` polling loop), the Installed/updates screen (#64, a toolbar-accessible list backed by `GET /installed` + `GET /updates`), the app icon/branding (#65), and code signing/notarization (#66, see `DISTRIBUTION.md`).
