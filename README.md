@@ -1,5 +1,7 @@
 # Genjux-Store
 
+[![CI](https://github.com/PetrGuan/Genjux-Store/actions/workflows/ci.yml/badge.svg)](https://github.com/PetrGuan/Genjux-Store/actions/workflows/ci.yml)
+
 **Genjux-Store** is a cross-platform (macOS / Windows / Linux / Android) open-source software discovery & installation client. It aims to solve a common pain point: most projects hosted on open-source hubs like GitHub or Gitee lack a friendly, one-click install experience.
 
 ## Core idea
@@ -10,7 +12,7 @@
 
 ## Status
 
-Early architecture-planning stage; implementation has not started yet. See [`.copilot-workflow/PLAN.md`](.copilot-workflow/PLAN.md) for the full architecture discussion and decisions made so far (layering, tech stack choices, security/trust model, monetization direction, roadmap, etc).
+Early development (Phase 0: core service + CLI, no native GUI yet). See [ROADMAP.md](ROADMAP.md) for the phased plan and [`.copilot-workflow/PLAN.md`](.copilot-workflow/PLAN.md) for the full architecture discussion and decisions made so far (layering, tech stack choices, security/trust model, monetization direction, etc).
 
 ## License
 
