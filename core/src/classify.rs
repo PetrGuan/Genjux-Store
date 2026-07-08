@@ -26,6 +26,23 @@ pub enum Platform {
     Android,
 }
 
+/// The platform this build of Genjux-Store is running on, if it's one of
+/// the four we support. Used by install orchestration (#11) to pick which
+/// `InstallablePackage` from a release matches the current machine.
+pub fn current_platform() -> Option<Platform> {
+    if cfg!(target_os = "macos") {
+        Some(Platform::MacOS)
+    } else if cfg!(target_os = "windows") {
+        Some(Platform::Windows)
+    } else if cfg!(target_os = "linux") {
+        Some(Platform::Linux)
+    } else if cfg!(target_os = "android") {
+        Some(Platform::Android)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Arch {
     X86_64,
@@ -411,6 +428,20 @@ mod tests {
     fn fully_ambiguous_filename_stays_unclassified_rather_than_guessing() {
         let c = classify_asset_by_filename(&asset("release-1.2.0.zip"));
         assert_eq!(c.platform, None);
+    }
+
+    #[test]
+    fn current_platform_matches_the_os_running_this_test() {
+        let detected = current_platform();
+        assert_eq!(
+            detected.is_some(),
+            cfg!(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "android"
+            ))
+        );
     }
 }
 
