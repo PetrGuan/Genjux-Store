@@ -36,4 +36,4 @@ xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Deb
 
 ## Status
 
-Phase 1 is in progress — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the current sub-issue checklist. So far: the initial project scaffold (#58, a real running window shell with a placeholder screen) and the local core-service client + lazy-start (#59). No functional product screens yet.
+Phase 1 is in progress — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the current sub-issue checklist. So far: the initial project scaffold (#58), the local core-service client + lazy-start (#59), and the Home screen (#60) — a real recommended-macOS-apps card grid backed by `GET /discover/macos`. Search, app detail, install progress, and installed/updates screens land in #61-#64.
