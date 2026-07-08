@@ -6,9 +6,11 @@ import Cocoa
 /// `NSApplication.shared.run()` is more predictable than relying on
 /// `@main`'s synthesized behavior for `NSApplicationDelegate` conformers.
 ///
-/// Owns the main window's toolbar search field (#61) and forwards
-/// submitted queries to `RootViewController`, which owns the actual
-/// screen-swapping between Home (#60) and Search (#61) content.
+/// Owns the main window's toolbar (search field, #61, and an "Installed"
+/// button, #64) and forwards their actions to `RootViewController`, which
+/// owns the actual screen-swapping between Home (#60), Search (#61),
+/// App detail (#62), Install progress (#63), and Installed/updates (#64)
+/// content.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private let rootViewController = RootViewController()
@@ -45,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func performSearch(_ sender: NSSearchField) {
         rootViewController.search(query: sender.stringValue)
     }
+
+    @objc private func showInstalled(_ sender: Any?) {
+        rootViewController.showInstalled()
+    }
 }
 
 extension AppDelegate: NSToolbarDelegate {
@@ -53,29 +59,39 @@ extension AppDelegate: NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        guard itemIdentifier == .genjuxSearch else {
+        switch itemIdentifier {
+        case .genjuxSearch:
+            let searchItem = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
+            searchItem.searchField.placeholderString = "owner/repo"
+            // Fires on Return (NSSearchField is an NSControl; target/action
+            // is the "submitted" event, not every keystroke) — an empty
+            // submission is how the user gets back to Home (see
+            // RootViewController.search's empty-query fallback).
+            searchItem.searchField.target = self
+            searchItem.searchField.action = #selector(performSearch(_:))
+            return searchItem
+        case .genjuxInstalled:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Installed"
+            item.target = self
+            item.action = #selector(showInstalled(_:))
+            item.image = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: "Installed")
+            return item
+        default:
             return nil
         }
-        let searchItem = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-        searchItem.searchField.placeholderString = "owner/repo"
-        // Fires on Return (NSSearchField is an NSControl; target/action
-        // is the "submitted" event, not every keystroke) — an empty
-        // submission is how the user gets back to Home (see
-        // RootViewController.search's empty-query fallback).
-        searchItem.searchField.target = self
-        searchItem.searchField.action = #selector(performSearch(_:))
-        return searchItem
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.genjuxSearch]
+        [.genjuxInstalled, .flexibleSpace, .genjuxSearch]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.genjuxSearch]
+        [.genjuxInstalled, .genjuxSearch, .flexibleSpace]
     }
 }
 
 private extension NSToolbarItem.Identifier {
     static let genjuxSearch = NSToolbarItem.Identifier("com.petrguan.GenjuxStore.search")
+    static let genjuxInstalled = NSToolbarItem.Identifier("com.petrguan.GenjuxStore.installed")
 }

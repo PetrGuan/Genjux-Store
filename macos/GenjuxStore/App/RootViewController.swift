@@ -1,10 +1,9 @@
 import Cocoa
 
 /// Root content view controller for the main window: swaps between the
-/// Home screen (#60), Search results (#61), App detail (#62), and Install
-/// progress (#63) as its single child content view controller. Later
-/// issues (#64 installed/updates) plug into this same mechanism. Built
-/// entirely in code, no Storyboards/XIBs.
+/// Home screen (#60), Search results (#61), App detail (#62), Install
+/// progress (#63), and Installed/updates (#64) as its single child
+/// content view controller. Built entirely in code, no Storyboards/XIBs.
 final class RootViewController: NSViewController {
     private var currentChild: NSViewController?
 
@@ -47,6 +46,14 @@ final class RootViewController: NSViewController {
         let search = SearchViewController(owner: String(parts[0]), repo: String(parts[1]))
         search.onBackTapped = { [weak self] in self?.showHome() }
         setContent(search)
+    }
+
+    /// Shows the Installed/updates screen (#64) — reached via the window
+    /// toolbar's "Installed" button (see `AppDelegate`).
+    func showInstalled() {
+        let installedScreen = InstalledViewController()
+        installedScreen.onBackTapped = { [weak self] in self?.showHome() }
+        setContent(installedScreen)
     }
 
     /// Shows the App detail screen (#62) for a Home-screen card.

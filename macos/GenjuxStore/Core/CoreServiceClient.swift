@@ -132,6 +132,19 @@ actor CoreServiceClient {
         try await get("/installs/\(id)", as: InstallStage.self)
     }
 
+    /// Calls `GET /installed` (#15) — every app installed via
+    /// Genjux-Store. Backs the Installed/updates screen (#64).
+    func installed() async throws -> [InstalledEntry] {
+        try await get("/installed", as: [InstalledEntry].self)
+    }
+
+    /// Calls `GET /updates` (#15/#20) — checks every installed entry
+    /// against its source's latest release. Backs the Installed/updates
+    /// screen (#64).
+    func updates() async throws -> [UpdateCheckResult] {
+        try await get("/updates", as: [UpdateCheckResult].self)
+    }
+
     private static func checkResponse(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             return
