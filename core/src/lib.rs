@@ -13,6 +13,7 @@ pub mod api;
 pub mod audit;
 pub mod classify;
 pub mod curator;
+pub mod discovery;
 pub mod download;
 pub mod lifecycle;
 pub mod mcp;
