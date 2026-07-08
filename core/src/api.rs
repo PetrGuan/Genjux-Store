@@ -30,7 +30,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-
 /// Shared state behind every route, and reused as-is by the MCP server
 /// (#17) so both surfaces see identical data.
 pub struct AppState {
@@ -71,6 +70,116 @@ impl AppState {
         let n = self.next_install_id.fetch_add(1, Ordering::Relaxed);
         format!("install-{n}")
     }
+
+    /// Looks up the release packages available for `owner/repo`,
+    /// classified by platform/arch/kind. Shared by the HTTP API and the
+    /// MCP server (#17) so both surfaces behave identically.
+    pub async fn get_packages(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<crate::package::InstallablePackage>, GetPackagesError> {
+        let repo_ref = RepoRef::new(self.source.provider_id(), owner, repo);
+        let release = self
+            .source
+            .latest_release(&repo_ref)
+            .await?
+            .ok_or(GetPackagesError::NoReleases)?;
+        Ok(classify_release(&release))
+    }
+
+    pub async fn list_installed(
+        &self,
+    ) -> Result<Vec<crate::registry::InstalledEntry>, crate::registry::RegistryError> {
+        self.registry.list_installed().await
+    }
+
+    /// Starts a background install for `owner/repo`, returning an install
+    /// id that [`Self::get_install_status`] can poll. Requires `Arc<Self>`
+    /// since the background task holds its own clone of the state.
+    pub fn start_install(self: &Arc<Self>, owner: String, repo: String) -> String {
+        let install_id = self.allocate_install_id();
+        let repo_ref = RepoRef::new(self.source.provider_id(), owner, repo);
+
+        self.installs
+            .lock()
+            .expect("installs lock poisoned")
+            .insert(install_id.clone(), InstallStage::Resolving);
+
+        let state_for_task = self.clone();
+        let id_for_task = install_id.clone();
+        tokio::spawn(async move {
+            // Ensure the destination directory exists before downloading
+            // into it — a fresh machine won't have it yet, and
+            // download_resumable doesn't create parent directories itself
+            // (it just opens/creates the destination file).
+            if let Err(e) = tokio::fs::create_dir_all(&state_for_task.install_dir).await {
+                state_for_task
+                    .installs
+                    .lock()
+                    .expect("installs lock poisoned")
+                    .insert(
+                        id_for_task.clone(),
+                        InstallStage::Failed {
+                            reason: format!("failed to create install directory: {e}"),
+                        },
+                    );
+                return;
+            }
+
+            let installs_handle = &state_for_task.installs;
+            let id_for_callback = id_for_task.clone();
+            let result = run_install(
+                &*state_for_task.source,
+                &repo_ref,
+                &state_for_task.install_dir,
+                &*state_for_task.adapter,
+                |stage| {
+                    installs_handle
+                        .lock()
+                        .expect("installs lock poisoned")
+                        .insert(id_for_callback.clone(), stage);
+                },
+            )
+            .await;
+
+            if result.is_ok() {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let _ = state_for_task
+                    .registry
+                    .record_install(crate::registry::InstalledEntry {
+                        repo: repo_ref,
+                        installed_tag: "unknown".to_string(),
+                        installed_at_unix: now,
+                        source_url: String::new(),
+                    })
+                    .await;
+            }
+        });
+
+        install_id
+    }
+
+    /// Returns the latest known stage of a previously started install, or
+    /// `None` if `id` isn't recognized.
+    pub fn get_install_status(&self, id: &str) -> Option<InstallStage> {
+        self.installs
+            .lock()
+            .expect("installs lock poisoned")
+            .get(id)
+            .cloned()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetPackagesError {
+    #[error("no releases found for this repo")]
+    NoReleases,
+    #[error(transparent)]
+    Source(#[from] crate::source::SourceError),
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -100,28 +209,23 @@ async fn get_packages(
     State(state): State<Arc<AppState>>,
     AxumPath((owner, repo)): AxumPath<(String, String)>,
 ) -> Result<Json<Vec<crate::package::InstallablePackage>>, (StatusCode, String)> {
-    let repo_ref = RepoRef::new(state.source.provider_id(), owner, repo);
-    let release = state
-        .source
-        .latest_release(&repo_ref)
+    state
+        .get_packages(&owner, &repo)
         .await
-        .map_err(|e| match e {
-            crate::source::SourceError::NotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
-            other => (StatusCode::BAD_GATEWAY, other.to_string()),
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            "no releases found for this repo".to_string(),
-        ))?;
-
-    Ok(Json(classify_release(&release)))
+        .map(Json)
+        .map_err(|e| match &e {
+            GetPackagesError::NoReleases => (StatusCode::NOT_FOUND, e.to_string()),
+            GetPackagesError::Source(crate::source::SourceError::NotFound(_)) => {
+                (StatusCode::NOT_FOUND, e.to_string())
+            }
+            _ => (StatusCode::BAD_GATEWAY, e.to_string()),
+        })
 }
 
 async fn list_installed(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<crate::registry::InstalledEntry>>, (StatusCode, String)> {
     state
-        .registry
         .list_installed()
         .await
         .map(Json)
@@ -143,69 +247,7 @@ async fn start_install(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InstallRequest>,
 ) -> Json<InstallStarted> {
-    let install_id = state.allocate_install_id();
-    let repo_ref = RepoRef::new(state.source.provider_id(), req.owner, req.repo);
-
-    state
-        .installs
-        .lock()
-        .expect("installs lock poisoned")
-        .insert(install_id.clone(), InstallStage::Resolving);
-
-    let state_for_task = state.clone();
-    let id_for_task = install_id.clone();
-    tokio::spawn(async move {
-        // Ensure the destination directory exists before downloading into
-        // it — a fresh machine won't have it yet, and download_resumable
-        // doesn't create parent directories itself (it just opens/creates
-        // the destination file).
-        if let Err(e) = tokio::fs::create_dir_all(&state_for_task.install_dir).await {
-            state_for_task
-                .installs
-                .lock()
-                .expect("installs lock poisoned")
-                .insert(
-                    id_for_task.clone(),
-                    InstallStage::Failed {
-                        reason: format!("failed to create install directory: {e}"),
-                    },
-                );
-            return;
-        }
-
-        let installs_handle = &state_for_task.installs;
-        let id_for_callback = id_for_task.clone();
-        let result = run_install(
-            &*state_for_task.source,
-            &repo_ref,
-            &state_for_task.install_dir,
-            &*state_for_task.adapter,
-            |stage| {
-                installs_handle
-                    .lock()
-                    .expect("installs lock poisoned")
-                    .insert(id_for_callback.clone(), stage);
-            },
-        )
-        .await;
-
-        if result.is_ok() {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let _ = state_for_task
-                .registry
-                .record_install(crate::registry::InstalledEntry {
-                    repo: repo_ref,
-                    installed_tag: "unknown".to_string(),
-                    installed_at_unix: now,
-                    source_url: String::new(),
-                })
-                .await;
-        }
-    });
-
+    let install_id = state.start_install(req.owner, req.repo);
     Json(InstallStarted { install_id })
 }
 
@@ -214,11 +256,7 @@ async fn get_install_status(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<InstallStage>, StatusCode> {
     state
-        .installs
-        .lock()
-        .expect("installs lock poisoned")
-        .get(&id)
-        .cloned()
+        .get_install_status(&id)
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
 }
