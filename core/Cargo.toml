@@ -1,0 +1,15 @@
+[package]
+name = "genjux-core"
+description = "Genjux-Store core service: discovery, release classification, download, verification, and install orchestration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "genjux_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "genjuxd"
+path = "src/main.rs"
