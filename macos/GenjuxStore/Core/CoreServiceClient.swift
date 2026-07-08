@@ -44,6 +44,12 @@ actor CoreServiceClient {
     /// Performs an authenticated GET against `path` (e.g. `/health`),
     /// decoding the JSON response as `T`. Lazily starts/discovers
     /// `genjuxd` first if this client hasn't already done so.
+    ///
+    /// `.convertFromSnakeCase` matches every response type's wire shape:
+    /// the core service's JSON is produced by plain `#[derive(Serialize)]`
+    /// Rust structs, whose field names are already snake_case (e.g.
+    /// `download_url`), and un-renamed enum variants (e.g. `"MacOS"`) —
+    /// see Models.swift's doc comment for how those map onto Swift.
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
         let info = try await serviceInfo()
         var request = URLRequest(url: baseURL(info).appendingPathComponent(path))
@@ -51,16 +57,24 @@ actor CoreServiceClient {
 
         let (data, response) = try await session.data(for: request)
         try Self.checkResponse(response, data: data)
-        return try JSONDecoder().decode(T.self, from: data)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(T.self, from: data)
     }
 
     /// Calls `GET /health` — the simplest possible proof that lazy-start,
     /// discovery, and authenticated request/response round-tripping all
-    /// actually work end-to-end. Later issues (#60-#64) add typed methods
-    /// for the product endpoints (`/discover`, `/repos/.../packages`,
-    /// `/repos/.../metadata`, `/installed`, ...) as each screen needs them.
+    /// actually work end-to-end.
     func health() async throws -> HealthResponse {
         try await get("/health", as: HealthResponse.self)
+    }
+
+    /// Calls `GET /discover/:platform` (#54-#56) — the Home screen's
+    /// (#60) recommended-software feed. `platform` defaults to `"macos"`
+    /// since that's the only flagship platform this GUI targets so far.
+    func discover(platform: String = "macos") async throws -> [RecommendedApp] {
+        try await get("/discover/\(platform)", as: [RecommendedApp].self)
     }
 
     private static func checkResponse(_ response: URLResponse, data: Data) throws {
