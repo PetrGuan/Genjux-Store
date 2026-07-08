@@ -4,11 +4,13 @@
 //! manager, install orchestration, local HTTP API (axum), and MCP server
 //! (rmcp) described in `.copilot-workflow/PLAN.md`. For now it exposes the
 //! pluggable [`source`] abstraction, the release-asset [`classify`]
-//! pipeline, and a version string; the rest of the business logic lands in
+//! pipeline, the standardized [`package::InstallablePackage`] schema and
+//! cache, and a version string; the rest of the business logic lands in
 //! the Phase 0 issues tracked at
 //! <https://github.com/PetrGuan/Genjux-Store/issues/22>.
 
 pub mod classify;
+pub mod package;
 pub mod source;
 
 /// Returns the core crate's version, as set by Cargo at build time.
