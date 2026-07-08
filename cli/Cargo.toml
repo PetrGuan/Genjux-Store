@@ -1,0 +1,11 @@
+[package]
+name = "genjux-cli"
+description = "Genjux-Store command-line client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "genjux"
+path = "src/main.rs"
