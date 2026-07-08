@@ -95,6 +95,12 @@ actor CoreServiceClient {
         try await get("/repos/\(owner)/\(repo)/packages", as: [InstallablePackage].self)
     }
 
+    /// Calls `GET /repos/:owner/:repo/metadata` (#57) — README excerpt,
+    /// stars, and last-release date for the App detail screen (#62).
+    func metadata(owner: String, repo: String) async throws -> RepoMetadata {
+        try await get("/repos/\(owner)/\(repo)/metadata", as: RepoMetadata.self)
+    }
+
     private static func checkResponse(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
             return

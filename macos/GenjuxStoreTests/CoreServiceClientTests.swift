@@ -118,13 +118,33 @@ final class CoreServiceClientTests: XCTestCase {
         // (core/tests/e2e_real_repos.rs, #21).
         let client = CoreServiceClient.makeForTesting()
 
-        let packages = try await client.packages(owner: "cli", repo: "cli")
+        do {
+            let packages = try await client.packages(owner: "cli", repo: "cli")
+            XCTAssertFalse(packages.isEmpty, "expected cli/cli to have real release assets")
+            XCTAssertTrue(
+                packages.contains { $0.classification.platform == .macOS },
+                "expected at least one real macOS asset among cli/cli's releases"
+            )
+        } catch {
+            try Self.skipIfRateLimited(error)
+            throw error
+        }
+    }
 
-        XCTAssertFalse(packages.isEmpty, "expected cli/cli to have real release assets")
-        XCTAssertTrue(
-            packages.contains { $0.classification.platform == .macOS },
-            "expected at least one real macOS asset among cli/cli's releases"
-        )
+    func testMetadataLookupReturnsRealRepoInfoForAWellKnownRepo() async throws {
+        let client = CoreServiceClient.makeForTesting()
+
+        do {
+            let metadata = try await client.metadata(owner: "cli", repo: "cli")
+            XCTAssertGreaterThan(metadata.stars, 1000, "expected cli/cli to have many real stars")
+            XCTAssertNotNil(metadata.description)
+            XCTAssertNotNil(metadata.lastReleaseAt)
+            let readme = try XCTUnwrap(metadata.readmeExcerpt)
+            XCTAssertFalse(readme.isEmpty)
+        } catch {
+            try Self.skipIfRateLimited(error)
+            throw error
+        }
     }
 
     func testPackagesLookupForARepoWithNoReleasesThrowsNotFound() async throws {
@@ -138,20 +158,26 @@ final class CoreServiceClientTests: XCTestCase {
             _ = try await client.packages(owner: "genjux-store-test-fixture", repo: "does-not-exist-12345")
             XCTFail("expected a not-found error for a repo that doesn't exist")
         } catch let error as CoreServiceError {
-            // The core service's GET /repos/:owner/:repo/packages handler
-            // (core/src/api.rs) maps a GitHub rate-limit error to the same
-            // 502 as any other unexpected error (a real, pre-existing gap
-            // from #16, not introduced here) -- and this specific
-            // unauthenticated call can genuinely get rate limited after
-            // heavy local test iteration in the same hour (observed for
-            // real while developing this test). Treat that as
-            // inconclusive rather than a false failure; only a real
-            // "not found" or a genuinely unexpected error should fail
-            // this test.
-            if case .httpError(let status, let body) = error, status == 502, body.contains("rate limited") {
-                throw XCTSkip("hit a real GitHub API rate limit -- inconclusive, not a real failure: \(body)")
-            }
+            try Self.skipIfRateLimited(error)
             XCTAssertTrue(error.isNotFound, "expected isNotFound to be true, got \(error)")
         }
+    }
+
+    /// GitHub's real, shared, unauthenticated rate limit (60/hour) can
+    /// genuinely be exhausted by heavy local iteration across this whole
+    /// test file (each test spawns its own genjuxd and makes real
+    /// requests) — observed for real while developing these tests, not
+    /// hypothetical. The core service's current error mapping doesn't
+    /// distinguish "rate limited" from other unexpected upstream errors
+    /// at the HTTP status level (a pre-existing #16 gap, not introduced
+    /// here), so this checks the error message. Treat a real rate limit
+    /// as inconclusive (skip) rather than a false failure; every other
+    /// error still fails the test normally.
+    private static func skipIfRateLimited(_ error: Error) throws {
+        guard case CoreServiceError.httpError(let status, let body) = error,
+              status == 502, body.contains("rate limited") else {
+            return
+        }
+        throw XCTSkip("hit a real GitHub API rate limit -- inconclusive, not a real failure: \(body)")
     }
 }

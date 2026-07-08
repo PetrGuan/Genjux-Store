@@ -12,6 +12,10 @@ final class HomeViewController: NSViewController {
     private let statusLabel = NSTextField(labelWithString: "")
     private let retryButton = NSButton(title: "Retry", target: nil, action: nil)
 
+    /// Called when the user taps "Details" on a card — `RootViewController`
+    /// wires this to open the App detail screen (#62) for that app.
+    var onAppSelected: ((RecommendedApp) -> Void)?
+
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
     }
@@ -124,6 +128,9 @@ extension HomeViewController: NSCollectionViewDataSource {
         let item = collectionView.makeItem(withIdentifier: itemIdentifier, for: indexPath)
         if let cardItem = item as? AppCardItem {
             cardItem.configure(with: apps[indexPath.item])
+            cardItem.onDetailsTapped = { [weak self] app in
+                self?.onAppSelected?(app)
+            }
         }
         return item
     }
