@@ -110,4 +110,48 @@ final class CoreServiceClientTests: XCTestCase {
         let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
         XCTAssertEqual(httpResponse.statusCode, 401)
     }
+
+    func testPackagesLookupReturnsClassifiedAssetsForARealRepo() async throws {
+        // Hits the real GitHub API (via the real genjuxd) for a
+        // well-known repo with real macOS/Windows/Linux release assets —
+        // same rigor as the Rust side's own real-repo verification
+        // (core/tests/e2e_real_repos.rs, #21).
+        let client = CoreServiceClient.makeForTesting()
+
+        let packages = try await client.packages(owner: "cli", repo: "cli")
+
+        XCTAssertFalse(packages.isEmpty, "expected cli/cli to have real release assets")
+        XCTAssertTrue(
+            packages.contains { $0.classification.platform == .macOS },
+            "expected at least one real macOS asset among cli/cli's releases"
+        )
+    }
+
+    func testPackagesLookupForARepoWithNoReleasesThrowsNotFound() async throws {
+        let client = CoreServiceClient.makeForTesting()
+
+        do {
+            // A real, extremely unlikely-to-exist repo name -- GitHub
+            // returns 404 for both "repo doesn't exist" and "repo has no
+            // releases" from this endpoint, which is exactly the case
+            // isNotFound is meant to capture.
+            _ = try await client.packages(owner: "genjux-store-test-fixture", repo: "does-not-exist-12345")
+            XCTFail("expected a not-found error for a repo that doesn't exist")
+        } catch let error as CoreServiceError {
+            // The core service's GET /repos/:owner/:repo/packages handler
+            // (core/src/api.rs) maps a GitHub rate-limit error to the same
+            // 502 as any other unexpected error (a real, pre-existing gap
+            // from #16, not introduced here) -- and this specific
+            // unauthenticated call can genuinely get rate limited after
+            // heavy local test iteration in the same hour (observed for
+            // real while developing this test). Treat that as
+            // inconclusive rather than a false failure; only a real
+            // "not found" or a genuinely unexpected error should fail
+            // this test.
+            if case .httpError(let status, let body) = error, status == 502, body.contains("rate limited") {
+                throw XCTSkip("hit a real GitHub API rate limit -- inconclusive, not a real failure: \(body)")
+            }
+            XCTAssertTrue(error.isNotFound, "expected isNotFound to be true, got \(error)")
+        }
+    }
 }
