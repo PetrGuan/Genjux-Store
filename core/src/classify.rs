@@ -150,10 +150,17 @@ pub fn refine_by_keywords(filename: &str, mut current: Classification) -> Classi
         Some(Platform::MacOS)
     } else if lower.contains("windows") || lower.contains("win64") || lower.contains("win32") {
         Some(Platform::Windows)
+    } else if lower.contains("android") {
+        // Must be checked before the plain "linux" match below: real
+        // Android target triples (aarch64-linux-android,
+        // armv7-linux-androideabi, ...) routinely contain "linux" as a
+        // substring, and would otherwise be misclassified as Linux (see
+        // https://github.com/PetrGuan/Genjux-Store/issues/51, found via
+        // the #21 real-repo validation harness against a real
+        // ClementTsang/bottom release asset).
+        Some(Platform::Android)
     } else if lower.contains("linux") {
         Some(Platform::Linux)
-    } else if lower.contains("android") {
-        Some(Platform::Android)
     } else {
         None
     };
@@ -413,6 +420,25 @@ mod tests {
         let c = classify_asset_by_filename(&asset("myapp-v1.2.0-x86_64-unknown-linux-gnu.tar.gz"));
         assert_eq!(c.platform, Some(Platform::Linux));
         assert_eq!(c.arch, Some(Arch::X86_64));
+    }
+
+    #[test]
+    fn tier2_resolves_android_target_triples_containing_linux_as_android_not_linux() {
+        // Regression test for #51: real Android target triples routinely
+        // contain "linux" as a substring, and must not be misclassified
+        // as Linux.
+        for filename in [
+            "bottom_aarch64-linux-android.tar.gz",
+            "myapp-armv7-linux-androideabi.tar.gz",
+            "myapp-x86_64-linux-android.tar.gz",
+        ] {
+            let c = classify_asset_by_filename(&asset(filename));
+            assert_eq!(
+                c.platform,
+                Some(Platform::Android),
+                "platform for {filename}"
+            );
+        }
     }
 
     #[test]

@@ -14,12 +14,6 @@
 //! Set `GENJUX_GITHUB_TOKEN` if you hit HTTP 403s running the full set
 //! repeatedly in a short window.
 //!
-//! One test, `bottom_android_target_triple_is_not_misclassified_as_linux`,
-//! is *expected to fail* when run this way: it documents a real classifier
-//! bug (tracked in #51) found via this harness, kept as a failing
-//! characterization test rather than silently special-cased away. Every
-//! other test failing is a genuine regression.
-//!
 //! Each test looks up the specific asset(s) it wants to assert on, rather
 //! than pinning every asset in the release — release contents drift over
 //! time (new architectures get added, old ones dropped), and asserting on
@@ -323,22 +317,20 @@ async fn helix_source_archive_stays_unclassified_while_platform_builds_do_not() 
     assert_eq!(source.classification.platform, None);
 }
 
-// --- Known classification bug found via this harness (tracked separately, not special-cased here) ---
+// --- Regression coverage for a bug this harness originally found (#51, now fixed) ---
 
 #[tokio::test]
-#[ignore = "known bug: Android target triples containing \"linux\" are misclassified as \
-            Linux (keyword-check ordering in classify::refine_by_keywords); tracked in \
-            https://github.com/PetrGuan/Genjux-Store/issues/51 — un-ignore once fixed"]
+#[ignore = "hits the real GitHub API/CDN; run explicitly, see module docs"]
 async fn bottom_android_target_triple_is_not_misclassified_as_linux() {
     let packages = latest_packages("ClementTsang", "bottom").await;
 
     // "bottom_aarch64-linux-android.tar.gz" is a real Rust target triple
-    // for Android, but refine_by_keywords checks `contains("linux")`
-    // before `contains("android")`, so it currently (incorrectly) matches
-    // Linux first. Filed as #51 rather than patched inline here, per #21's
-    // acceptance criteria: a classification bug found by this validation
-    // harness becomes a tracked follow-up issue, not a silent special
-    // case bolted onto the harness or the classifier.
+    // for Android; this harness originally found it misclassified as
+    // Linux (refine_by_keywords checked "linux" before "android") and the
+    // fix was filed/landed as #51 rather than patched inline here, per
+    // #21's acceptance criteria: a classification bug found by this
+    // validation harness becomes a tracked follow-up issue, not a silent
+    // special case bolted onto the harness or the classifier.
     let android = find_one(&packages, &["aarch64-linux-android"], ".tar.gz");
     assert_eq!(android.classification.platform, Some(Platform::Android));
 }
