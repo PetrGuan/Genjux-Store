@@ -42,9 +42,25 @@ fn lock_file_path() -> PathBuf {
     runtime_dir().join("genjuxd.lock")
 }
 
-/// What a running `genjuxd` instance publishes into the lock file so
-/// other local processes (the CLI, in #20) can find it instead of
-/// starting a second instance.
+/// Where the running instance's [`ServiceInfo`] is published — a
+/// deliberately separate, never-locked file from `genjuxd.lock` itself.
+/// Windows' `LockFileEx` is *mandatory*: it blocks ordinary reads through
+/// other handles/processes for as long as the lock is held, unlike POSIX
+/// advisory locks (`flock`), which only affect other explicit lock
+/// attempts, not plain I/O. Storing the discovery info in the same file
+/// as the lock therefore made it impossible for another process to read
+/// it back while the lock was held — confirmed via real windows-latest
+/// CI failures while developing this feature. Separating "mutual
+/// exclusion" (the empty, always-locked `.lock` file) from "discovery
+/// data" (this always-plain-readable file) sidesteps the platform
+/// difference entirely instead of fighting it with Windows-specific
+/// share-mode flags.
+fn info_file_path() -> PathBuf {
+    runtime_dir().join("genjuxd.json")
+}
+
+/// What a running `genjuxd` instance publishes so other local processes
+/// (the CLI, in #20) can find it instead of starting a second instance.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ServiceInfo {
     pub port: u16,
@@ -78,19 +94,17 @@ pub enum LifecycleError {
 /// file" that has to be interpreted heuristically).
 pub struct SingletonLock {
     file: std::fs::File,
-    path: PathBuf,
+    lock_path: PathBuf,
+    info_path: PathBuf,
 }
 
 impl SingletonLock {
-    /// Publishes this instance's `info` into the locked file so other
-    /// processes that fail to acquire the lock can read it.
+    /// Publishes this instance's `info` into the separate, unlocked
+    /// discovery file (see [`info_file_path`] for why it's not stored in
+    /// the lock file itself).
     pub fn publish(&mut self, info: &ServiceInfo) -> Result<(), LifecycleError> {
-        use std::io::{Seek, SeekFrom, Write};
         let json = serde_json::to_vec(info)?;
-        self.file.set_len(0)?;
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.write_all(&json)?;
-        self.file.flush()?;
+        std::fs::write(&self.info_path, json)?;
         Ok(())
     }
 }
@@ -100,8 +114,9 @@ impl Drop for SingletonLock {
         let _ = FileExt::unlock(&self.file);
         // Best-effort cleanup; if this fails (e.g. another process is
         // racing to acquire right as we exit) that's fine, the lock
-        // itself is what matters, not the file's continued existence.
-        let _ = std::fs::remove_file(&self.path);
+        // itself is what matters, not the files' continued existence.
+        let _ = std::fs::remove_file(&self.lock_path);
+        let _ = std::fs::remove_file(&self.info_path);
     }
 }
 
@@ -119,8 +134,9 @@ pub enum AcquireOutcome {
 /// of erroring — the expected, common case (a client lazily starting the
 /// service finds one already running).
 pub fn try_acquire_singleton_lock() -> Result<AcquireOutcome, LifecycleError> {
-    let path = lock_file_path();
-    if let Some(parent) = path.parent() {
+    let lock_path = lock_file_path();
+    let info_path = info_file_path();
+    if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let file = std::fs::OpenOptions::new()
@@ -128,12 +144,16 @@ pub fn try_acquire_singleton_lock() -> Result<AcquireOutcome, LifecycleError> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(&path)?;
+        .open(&lock_path)?;
 
     match FileExt::try_lock_exclusive(&file) {
-        Ok(()) => Ok(AcquireOutcome::Acquired(SingletonLock { file, path })),
+        Ok(()) => Ok(AcquireOutcome::Acquired(SingletonLock {
+            file,
+            lock_path,
+            info_path,
+        })),
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-            let contents = std::fs::read_to_string(&path)?;
+            let contents = std::fs::read_to_string(&info_path)?;
             let info: ServiceInfo = serde_json::from_str(&contents)?;
             Ok(AcquireOutcome::AlreadyRunning(info))
         }
@@ -250,11 +270,12 @@ mod tests {
 
     #[test]
     fn second_lock_attempt_on_the_same_path_finds_the_first_instances_published_info() {
-        // Point both attempts at an isolated temp lock file rather than
-        // the real per-user runtime_dir(), so parallel test runs (and
-        // other tests in this suite) can't collide on the same path.
+        // Point at isolated temp paths rather than the real per-user
+        // runtime_dir(), so parallel test runs (and other tests in this
+        // suite) can't collide.
         let tmp = tempfile::tempdir().unwrap();
         let lock_path = tmp.path().join("genjuxd.lock");
+        let info_path = tmp.path().join("genjuxd.json");
 
         let file_a = std::fs::OpenOptions::new()
             .create(true)
@@ -266,7 +287,8 @@ mod tests {
         FileExt::try_lock_exclusive(&file_a).expect("first attempt should acquire the lock");
         let mut lock_a = SingletonLock {
             file: file_a,
-            path: lock_path.clone(),
+            lock_path: lock_path.clone(),
+            info_path: info_path.clone(),
         };
         let info = ServiceInfo {
             port: 4242,
@@ -274,38 +296,28 @@ mod tests {
         };
         lock_a.publish(&info).unwrap();
 
-        // Read the published content back through the *same handle*
-        // that holds the lock, not a fresh path-based open. Windows'
-        // mandatory locking blocks ordinary reads through other handles
-        // for as long as the lock is held (unlike POSIX advisory locks,
-        // which only affect other explicit lock attempts, not plain
-        // I/O) — confirmed via a real windows-latest CI failure
-        // (`std::fs::read_to_string` on the locked path returned "the
-        // process cannot access the file because another process has
-        // locked a portion of the file").
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            lock_a.file.seek(SeekFrom::Start(0)).unwrap();
-            let mut contents = String::new();
-            lock_a.file.read_to_string(&mut contents).unwrap();
-            let read_back: ServiceInfo = serde_json::from_str(&contents).unwrap();
-            assert_eq!(read_back, info);
-        }
+        // The info file is deliberately separate from the locked file
+        // (see `info_file_path`'s doc comment for why), so a plain read
+        // works here on every platform even while `lock_a` still holds
+        // the lock file's exclusive lock.
+        let contents = std::fs::read_to_string(&info_path).unwrap();
+        let read_back: ServiceInfo = serde_json::from_str(&contents).unwrap();
+        assert_eq!(read_back, info);
 
-        // Cross-process mutual exclusion (the guarantee that actually
-        // matters in production — two separate `genjuxd` processes) is
-        // enforced identically on all three platforms: this is standard,
-        // well-documented OS file-locking behavior. But *this specific
-        // check* simulates "two attempts" with two handles opened by the
-        // same process, and that scenario is only reliable evidence of
-        // exclusion on Unix. Windows' LockFileEx is explicitly
-        // per-process, not per-handle (MSDN: "A process can lock a
-        // region of a file more than once... There is no conflict
-        // between different file handles for the same file in the same
-        // process") — so a second handle in the *same* process is
-        // guaranteed to succeed on Windows regardless of whether another
-        // process holds the lock. The genuine cross-process guarantee is
-        // covered separately by
+        // Cross-process mutual exclusion on the *lock file* (the
+        // guarantee that actually matters in production — two separate
+        // `genjuxd` processes) is enforced identically on all three
+        // platforms: this is standard, well-documented OS file-locking
+        // behavior. But *this specific check* simulates "two attempts"
+        // with two handles opened by the same process, and that
+        // scenario is only reliable evidence of exclusion on Unix.
+        // Windows' LockFileEx is explicitly per-process, not per-handle
+        // (MSDN: "A process can lock a region of a file more than
+        // once... There is no conflict between different file handles
+        // for the same file in the same process") — so a second handle
+        // in the *same* process is guaranteed to succeed on Windows
+        // regardless of whether another process holds the lock. The
+        // genuine cross-process guarantee is covered separately by
         // `core/tests/lifecycle_cross_process.rs`, which spawns a real
         // second OS process.
         #[cfg(unix)]
@@ -322,10 +334,10 @@ mod tests {
             );
         }
 
-        drop(lock_a); // releases the OS-level lock and removes the file
+        drop(lock_a); // releases the OS-level lock and removes both files
 
-        // A fresh open+lock attempt (not reusing any handle from before
-        // the drop) should succeed now that the holder is gone.
+        // A fresh open+lock attempt should succeed now that the holder
+        // is gone.
         let file_c = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)

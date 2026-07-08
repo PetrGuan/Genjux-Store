@@ -10,7 +10,7 @@ use genjux_core::lifecycle::{try_acquire_singleton_lock, AcquireOutcome};
 use std::time::{Duration, Instant};
 
 /// Spawns the real `genjuxd` binary as a genuinely separate OS process,
-/// waits for it to publish its lock file, then confirms
+/// waits for it to publish its discovery info file, then confirms
 /// `try_acquire_singleton_lock()` from *this* process correctly reports
 /// it's already running instead of double-acquiring. Kills the child
 /// afterward and confirms the lock becomes acquirable again.
@@ -32,12 +32,12 @@ fn a_second_process_finds_the_first_real_genjuxd_process_already_running() {
         .spawn()
         .expect("failed to spawn the real genjuxd binary");
 
-    let lock_path = tmp.path().join("genjuxd.lock");
+    let info_path = tmp.path().join("genjuxd.json");
     let deadline = Instant::now() + Duration::from_secs(15);
-    while !lock_path.exists() {
+    while !info_path.exists() {
         if Instant::now() > deadline {
             let _ = child.kill();
-            panic!("genjuxd did not publish its lock file within 15s");
+            panic!("genjuxd did not publish its info file within 15s");
         }
         std::thread::sleep(Duration::from_millis(20));
     }
