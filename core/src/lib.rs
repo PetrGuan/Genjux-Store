@@ -9,6 +9,7 @@
 //! the Phase 0 issues tracked at
 //! <https://github.com/PetrGuan/Genjux-Store/issues/22>.
 
+pub mod api;
 pub mod audit;
 pub mod classify;
 pub mod curator;
