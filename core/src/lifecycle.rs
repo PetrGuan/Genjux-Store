@@ -274,31 +274,47 @@ mod tests {
         };
         lock_a.publish(&info).unwrap();
 
-        let file_b = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&lock_path)
-            .unwrap();
+        // Read the published content back through the *same handle*
+        // that holds the lock, not a fresh path-based open. Windows'
+        // mandatory locking blocks ordinary reads through other handles
+        // for as long as the lock is held (unlike POSIX advisory locks,
+        // which only affect other explicit lock attempts, not plain
+        // I/O) — confirmed via a real windows-latest CI failure
+        // (`std::fs::read_to_string` on the locked path returned "the
+        // process cannot access the file because another process has
+        // locked a portion of the file").
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            lock_a.file.seek(SeekFrom::Start(0)).unwrap();
+            let mut contents = String::new();
+            lock_a.file.read_to_string(&mut contents).unwrap();
+            let read_back: ServiceInfo = serde_json::from_str(&contents).unwrap();
+            assert_eq!(read_back, info);
+        }
 
         // Cross-process mutual exclusion (the guarantee that actually
         // matters in production — two separate `genjuxd` processes) is
         // enforced identically on all three platforms: this is standard,
-        // well-documented OS file-locking behavior. But *this test*
-        // simulates "two attempts" with two handles opened by the same
-        // process, and that specific scenario is only reliable evidence
-        // of exclusion on Unix. Windows' LockFileEx is explicitly
-        // per-process, not per-handle (see MSDN: "A process can lock a
+        // well-documented OS file-locking behavior. But *this specific
+        // check* simulates "two attempts" with two handles opened by the
+        // same process, and that scenario is only reliable evidence of
+        // exclusion on Unix. Windows' LockFileEx is explicitly
+        // per-process, not per-handle (MSDN: "A process can lock a
         // region of a file more than once... There is no conflict
         // between different file handles for the same file in the same
         // process") — so a second handle in the *same* process is
         // guaranteed to succeed on Windows regardless of whether another
-        // process holds the lock, which is exactly the opposite of what
-        // this assertion checks. Verified this the hard way: this
-        // assertion originally had no cfg guard and failed on the
-        // windows-latest CI runner precisely because of this documented
-        // behavior difference, not a bug in SingletonLock itself.
+        // process holds the lock. The genuine cross-process guarantee is
+        // covered separately by
+        // `core/tests/lifecycle_cross_process.rs`, which spawns a real
+        // second OS process.
         #[cfg(unix)]
         {
+            let file_b = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&lock_path)
+                .unwrap();
             let acquired_b = FileExt::try_lock_exclusive(&file_b);
             assert!(
                 acquired_b.is_err_and(|e| e.kind() == io::ErrorKind::WouldBlock),
@@ -306,13 +322,19 @@ mod tests {
             );
         }
 
-        let contents = std::fs::read_to_string(&lock_path).unwrap();
-        let read_back: ServiceInfo = serde_json::from_str(&contents).unwrap();
-        assert_eq!(read_back, info);
+        drop(lock_a); // releases the OS-level lock and removes the file
 
-        drop(lock_a); // releases the OS-level lock
+        // A fresh open+lock attempt (not reusing any handle from before
+        // the drop) should succeed now that the holder is gone.
+        let file_c = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
         assert!(
-            FileExt::try_lock_exclusive(&file_b).is_ok(),
+            FileExt::try_lock_exclusive(&file_c).is_ok(),
             "lock should become available again once the holder drops it"
         );
     }
