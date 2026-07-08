@@ -11,6 +11,8 @@
 //! <https://github.com/PetrGuan/Genjux-Store/issues/28> for the design
 //! rationale.
 
+pub mod github;
+
 use async_trait::async_trait;
 use std::fmt;
 
