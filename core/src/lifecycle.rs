@@ -20,16 +20,19 @@
 use fs4::fs_std::FileExt;
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Where `genjuxd`'s lock/discovery file and any other per-user runtime
 /// state lives. Uses the OS-appropriate local data directory (e.g.
 /// `~/Library/Application Support/genjux` on macOS, `~/.local/share/genjux`
 /// on Linux, `%LOCALAPPDATA%\genjux` on Windows) rather than a hardcoded
-/// path.
+/// path. Honors `GENJUX_RUNTIME_DIR` if set, so tests (and advanced users)
+/// can redirect it without touching the real per-user data directory.
 pub fn runtime_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("GENJUX_RUNTIME_DIR") {
+        return PathBuf::from(dir);
+    }
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("genjux")
@@ -142,33 +145,44 @@ pub fn try_acquire_singleton_lock() -> Result<AcquireOutcome, LifecycleError> {
 /// can decide when the service has been idle long enough to shut down.
 /// Cheap to update on every request (a single atomic store), and safe to
 /// share across the whole axum router via `Arc`.
-#[derive(Default)]
+///
+/// Tracks elapsed time via a monotonic [`Instant`] (not a wall-clock
+/// `SystemTime`/unix-timestamp), for two reasons: it's immune to the
+/// system clock being adjusted mid-run, and it has sub-second precision
+/// — a unix-seconds timestamp rounds away exactly the granularity needed
+/// to test the idle-shutdown watcher without waiting on real 30-minute
+/// timeouts (discovered via a real flaky test failure while developing
+/// this: a whole-second-resolution clock made a 50ms test timeout
+/// meaningless).
 pub struct ActivityTracker {
-    last_activity_unix: AtomicU64,
+    last_activity: std::sync::Mutex<Instant>,
+}
+
+impl Default for ActivityTracker {
+    fn default() -> Self {
+        Self {
+            last_activity: std::sync::Mutex::new(Instant::now()),
+        }
+    }
 }
 
 impl ActivityTracker {
     pub fn new() -> Arc<Self> {
-        let tracker = Self::default();
-        tracker.touch();
-        Arc::new(tracker)
+        Arc::new(Self::default())
     }
 
     pub fn touch(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        self.last_activity_unix.store(now, Ordering::Relaxed);
+        *self
+            .last_activity
+            .lock()
+            .expect("activity tracker lock poisoned") = Instant::now();
     }
 
     fn idle_for(&self) -> Duration {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let last = self.last_activity_unix.load(Ordering::Relaxed);
-        Duration::from_secs(now.saturating_sub(last))
+        self.last_activity
+            .lock()
+            .expect("activity tracker lock poisoned")
+            .elapsed()
     }
 }
 
@@ -265,11 +279,32 @@ mod tests {
             .write(true)
             .open(&lock_path)
             .unwrap();
-        let acquired_b = FileExt::try_lock_exclusive(&file_b);
-        assert!(
-            acquired_b.is_err_and(|e| e.kind() == io::ErrorKind::WouldBlock),
-            "second attempt must not acquire the lock while the first is held"
-        );
+
+        // Cross-process mutual exclusion (the guarantee that actually
+        // matters in production — two separate `genjuxd` processes) is
+        // enforced identically on all three platforms: this is standard,
+        // well-documented OS file-locking behavior. But *this test*
+        // simulates "two attempts" with two handles opened by the same
+        // process, and that specific scenario is only reliable evidence
+        // of exclusion on Unix. Windows' LockFileEx is explicitly
+        // per-process, not per-handle (see MSDN: "A process can lock a
+        // region of a file more than once... There is no conflict
+        // between different file handles for the same file in the same
+        // process") — so a second handle in the *same* process is
+        // guaranteed to succeed on Windows regardless of whether another
+        // process holds the lock, which is exactly the opposite of what
+        // this assertion checks. Verified this the hard way: this
+        // assertion originally had no cfg guard and failed on the
+        // windows-latest CI runner precisely because of this documented
+        // behavior difference, not a bug in SingletonLock itself.
+        #[cfg(unix)]
+        {
+            let acquired_b = FileExt::try_lock_exclusive(&file_b);
+            assert!(
+                acquired_b.is_err_and(|e| e.kind() == io::ErrorKind::WouldBlock),
+                "second attempt must not acquire the lock while the first is held"
+            );
+        }
 
         let contents = std::fs::read_to_string(&lock_path).unwrap();
         let read_back: ServiceInfo = serde_json::from_str(&contents).unwrap();
