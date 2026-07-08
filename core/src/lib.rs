@@ -13,6 +13,7 @@ pub mod audit;
 pub mod classify;
 pub mod curator;
 pub mod download;
+pub mod orchestrate;
 pub mod package;
 pub mod registry;
 pub mod source;
