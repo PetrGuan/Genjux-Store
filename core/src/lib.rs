@@ -14,6 +14,7 @@ pub mod audit;
 pub mod classify;
 pub mod curator;
 pub mod download;
+pub mod lifecycle;
 pub mod mcp;
 pub mod orchestrate;
 pub mod package;
