@@ -30,12 +30,13 @@ All four must pass on your machine. There is no automated safety net catching re
 
 **Cross-platform code**: the core crate has platform-specific adapters (`core/src/platform/{macos,windows,linux}.rs`) and OS-specific behavior in `lifecycle.rs`. Without CI, code for a platform you're not running locally can only be compile-checked, not test-verified — call this out explicitly in your PR description (e.g. "Windows-specific changes, only compile-checked on macOS, needs a Windows run before merging") so reviewers know what's actually been exercised.
 
-**macOS app** (`macos/`, Phase 1): regenerate and build before opening a PR that touches it —
+**macOS app** (`macos/`, Phase 1): regenerate, build, and test before opening a PR that touches it —
 
 ```bash
 cd macos
 xcodegen generate
 xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Debug build
+xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Debug test
 ```
 
 See [`macos/README.md`](macos/README.md) for more.

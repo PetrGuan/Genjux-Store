@@ -21,8 +21,19 @@ xcodegen generate
 xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Debug build
 ```
 
-The app expects a `genjuxd` core service reachable via the local HTTP API (see [`../core/src/lifecycle.rs`](../core/src/lifecycle.rs) for the lazy-start/discovery mechanism the CLI already uses — the GUI's equivalent client lands in a later issue).
+The app itself lazily starts and talks to a `genjuxd` core service via the local HTTP API (see [`../core/src/lifecycle.rs`](../core/src/lifecycle.rs) for the on-disk singleton-lock/discovery-file protocol, and [`GenjuxStore/Core/ServiceLifecycle.swift`](GenjuxStore/Core/ServiceLifecycle.swift) for the Swift side of it — the same protocol the CLI uses, so a GUI and CLI session correctly share one running instance).
+
+## Testing
+
+`GenjuxStoreTests` includes a real end-to-end test against the actual `genjuxd` binary (skipped, not failed, if it hasn't been built yet):
+
+```bash
+cargo build --bin genjuxd  # from the repo root, first
+cd macos
+xcodegen generate
+xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Debug test
+```
 
 ## Status
 
-Phase 1 is in progress — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the current sub-issue checklist. This directory currently contains only the initial project scaffold (#58): a real, running window shell with a placeholder screen, no functional UI yet.
+Phase 1 is in progress — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the current sub-issue checklist. So far: the initial project scaffold (#58, a real running window shell with a placeholder screen) and the local core-service client + lazy-start (#59). No functional product screens yet.

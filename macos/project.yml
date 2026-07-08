@@ -17,8 +17,13 @@ schemes:
     build:
       targets:
         GenjuxStore: all
+        GenjuxStoreTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - GenjuxStoreTests
 targets:
   GenjuxStore:
     type: application
@@ -31,4 +36,16 @@ targets:
         INFOPLIST_FILE: GenjuxStore/App/Info.plist
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+  GenjuxStoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: GenjuxStoreTests
+    dependencies:
+      - target: GenjuxStore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.petrguan.GenjuxStoreTests
+        GENERATE_INFOPLIST_FILE: "YES"
         MACOSX_DEPLOYMENT_TARGET: "13.0"
