@@ -10,6 +10,7 @@
 //! <https://github.com/PetrGuan/Genjux-Store/issues/22>.
 
 pub mod classify;
+pub mod curator;
 pub mod package;
 pub mod source;
 
