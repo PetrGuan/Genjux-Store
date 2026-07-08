@@ -118,7 +118,7 @@ pub enum UpdateCheckError {
 
 /// The result of comparing one installed entry against the latest release
 /// known to its source provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpdateCheckResult {
     pub repo: RepoRef,
     pub installed_tag: String,
@@ -134,8 +134,8 @@ pub async fn check_for_updates<R, P>(
     provider: &P,
 ) -> Result<Vec<UpdateCheckResult>, UpdateCheckError>
 where
-    R: InstalledAppRegistry,
-    P: SourceProvider,
+    R: InstalledAppRegistry + ?Sized,
+    P: SourceProvider + ?Sized,
 {
     let mut results = Vec::new();
     for entry in registry.list_installed().await? {

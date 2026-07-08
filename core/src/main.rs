@@ -90,8 +90,12 @@ async fn main() {
         .expect("genjuxd: failed to read the bound address")
         .port();
 
-    lock.publish(&ServiceInfo { port, token })
-        .expect("genjuxd: failed to publish service info");
+    lock.publish(&ServiceInfo {
+        port,
+        token,
+        pid: std::process::id(),
+    })
+    .expect("genjuxd: failed to publish service info");
 
     let shutdown = tokio_util::sync::CancellationToken::new();
     let idle_watcher = tokio::spawn(lifecycle::run_idle_shutdown_watcher(
