@@ -11,6 +11,7 @@
 
 pub mod classify;
 pub mod curator;
+pub mod download;
 pub mod package;
 pub mod source;
 
