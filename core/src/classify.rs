@@ -26,6 +26,37 @@ pub enum Platform {
     Android,
 }
 
+impl Platform {
+    /// Stable lowercase identifier for this platform (e.g. for use as an
+    /// HTTP path segment or cache key) — the inverse of [`Platform::from_str`].
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Platform::MacOS => "macos",
+            Platform::Windows => "windows",
+            Platform::Linux => "linux",
+            Platform::Android => "android",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unrecognized platform: {0:?}")]
+pub struct ParsePlatformError(pub String);
+
+impl std::str::FromStr for Platform {
+    type Err = ParsePlatformError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "macos" => Ok(Platform::MacOS),
+            "windows" => Ok(Platform::Windows),
+            "linux" => Ok(Platform::Linux),
+            "android" => Ok(Platform::Android),
+            _ => Err(ParsePlatformError(s.to_string())),
+        }
+    }
+}
+
 /// The platform this build of Genjux-Store is running on, if it's one of
 /// the four we support. Used by install orchestration (#11) to pick which
 /// `InstallablePackage` from a release matches the current machine.
@@ -468,6 +499,30 @@ mod tests {
                 target_os = "android"
             ))
         );
+    }
+
+    #[test]
+    fn platform_as_str_and_from_str_round_trip() {
+        for platform in [
+            Platform::MacOS,
+            Platform::Windows,
+            Platform::Linux,
+            Platform::Android,
+        ] {
+            let parsed: Platform = platform.as_str().parse().unwrap();
+            assert_eq!(parsed, platform);
+        }
+    }
+
+    #[test]
+    fn platform_from_str_is_case_insensitive() {
+        assert_eq!("MacOS".parse::<Platform>().unwrap(), Platform::MacOS);
+        assert_eq!("MACOS".parse::<Platform>().unwrap(), Platform::MacOS);
+    }
+
+    #[test]
+    fn platform_from_str_rejects_unknown_values() {
+        assert!("plan9".parse::<Platform>().is_err());
     }
 }
 
