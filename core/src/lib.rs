@@ -15,6 +15,7 @@ pub mod curator;
 pub mod download;
 pub mod orchestrate;
 pub mod package;
+pub mod platform;
 pub mod registry;
 pub mod source;
 pub mod verify;
