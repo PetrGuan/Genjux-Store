@@ -1,0 +1,23 @@
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Windows / .NET
+bin/
+obj/
+*.user
+
+# Android / Gradle
+.gradle/
+local.properties
+*.iml
+.cxx/
