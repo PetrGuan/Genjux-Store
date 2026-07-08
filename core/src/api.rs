@@ -71,6 +71,7 @@ pub struct AppState {
     next_install_id: AtomicU64,
     discovery_search_client: GitHubSearchClient,
     discovery_cache: Arc<dyn DiscoveryCache>,
+    metadata_client: crate::source::github::GitHubProvider,
 }
 
 impl AppState {
@@ -91,6 +92,7 @@ impl AppState {
             next_install_id: AtomicU64::new(1),
             discovery_search_client: GitHubSearchClient::from_env(),
             discovery_cache: Arc::new(InMemoryDiscoveryCache::new(DISCOVERY_CACHE_TTL)),
+            metadata_client: crate::source::github::GitHubProvider::from_env(),
         }
     }
 
@@ -105,6 +107,17 @@ impl AppState {
     ) -> Self {
         self.discovery_search_client = search_client;
         self.discovery_cache = cache;
+        self
+    }
+
+    /// Overrides the repo-metadata client — used by tests to point it at a
+    /// mock server, mirroring [`Self::with_discovery`].
+    #[cfg(test)]
+    fn with_metadata_client(
+        mut self,
+        metadata_client: crate::source::github::GitHubProvider,
+    ) -> Self {
+        self.metadata_client = metadata_client;
         self
     }
 
@@ -128,6 +141,22 @@ impl AppState {
             .await?
             .ok_or(GetPackagesError::NoReleases)?;
         Ok(classify_release(&release))
+    }
+
+    /// Fetches repo-level metadata (README excerpt, stars, last-release
+    /// date — #57) for the app-detail screen. Deliberately uses a
+    /// dedicated GitHub-specific client rather than `self.source`: this
+    /// isn't part of the `SourceProvider` trait (see
+    /// `source::github`'s module doc comment for why), matching the same
+    /// "concrete GitHub-specific field alongside the generic trait object"
+    /// pattern as `discovery_search_client`.
+    pub async fn get_repo_metadata(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<crate::source::github::RepoMetadata, crate::source::SourceError> {
+        let repo_ref = RepoRef::new("github", owner, repo);
+        self.metadata_client.fetch_metadata(&repo_ref).await
     }
 
     /// Returns the recommended-software feed for `platform` (#54/#55),
@@ -265,6 +294,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/repos/:owner/:repo/packages", get(get_packages))
+        .route("/repos/:owner/:repo/metadata", get(get_repo_metadata))
         .route("/discover/:platform", get(discover_platform))
         .route("/installed", get(list_installed))
         .route("/updates", get(get_updates))
@@ -299,6 +329,20 @@ async fn get_packages(
             GetPackagesError::Source(crate::source::SourceError::NotFound(_)) => {
                 (StatusCode::NOT_FOUND, e.to_string())
             }
+            _ => (StatusCode::BAD_GATEWAY, e.to_string()),
+        })
+}
+
+async fn get_repo_metadata(
+    State(state): State<Arc<AppState>>,
+    AxumPath((owner, repo)): AxumPath<(String, String)>,
+) -> Result<Json<crate::source::github::RepoMetadata>, (StatusCode, String)> {
+    state
+        .get_repo_metadata(&owner, &repo)
+        .await
+        .map(Json)
+        .map_err(|e| match &e {
+            crate::source::SourceError::NotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
             _ => (StatusCode::BAD_GATEWAY, e.to_string()),
         })
 }
@@ -874,5 +918,109 @@ mod tests {
 
         // Dropping the MockServer verifies the `.expect(3)` assertion.
         drop(search_server);
+    }
+
+    async fn test_state_with_metadata_client(metadata_server_uri: String) -> Arc<AppState> {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = JsonFileRegistry::open(tmp.path().join("registry.json"))
+            .await
+            .unwrap();
+        let audit_log = JsonlAuditLog::new(tmp.path().join("audit.jsonl"));
+
+        let state = AppState::new(
+            Arc::new(MockProvider::new()),
+            Arc::new(registry),
+            Arc::new(audit_log),
+            Arc::new(NoopAdapter),
+            tmp.path().join("installs"),
+        )
+        .with_metadata_client(
+            crate::source::github::GitHubProvider::new().with_base_url(metadata_server_uri),
+        );
+        std::mem::forget(tmp); // see test_state_with_discovery's comment on why
+        Arc::new(state)
+    }
+
+    #[tokio::test]
+    async fn metadata_endpoint_returns_repo_info_release_date_and_readme() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/widget"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "stargazers_count": 999,
+                "description": "A fine widget",
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/widget/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tag_name": "v1.0.0",
+                "published_at": "2025-06-01T00:00:00Z",
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/widget/readme"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("# Widget"))
+            .mount(&server)
+            .await;
+
+        let state = test_state_with_metadata_client(server.uri()).await;
+        let router = build_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/repos/acme/widget/metadata")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let metadata: crate::source::github::RepoMetadata = serde_json::from_slice(&body).unwrap();
+        assert_eq!(metadata.stars, 999);
+        assert_eq!(metadata.description.as_deref(), Some("A fine widget"));
+        assert_eq!(
+            metadata.last_release_at.as_deref(),
+            Some("2025-06-01T00:00:00Z")
+        );
+        assert_eq!(metadata.readme_excerpt.as_deref(), Some("# Widget"));
+    }
+
+    #[tokio::test]
+    async fn metadata_endpoint_returns_404_for_an_unknown_repo() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/nobody/nothing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let state = test_state_with_metadata_client(server.uri()).await;
+        let router = build_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/repos/nobody/nothing/metadata")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
