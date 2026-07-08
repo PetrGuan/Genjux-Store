@@ -15,17 +15,20 @@ All work is tracked as GitHub Issues, grouped into phase [Milestones](https://gi
 - Prefer smaller, single-purpose PRs that map to a single issue over large multi-issue PRs.
 - If you want to work on an issue, leave a comment on it first to avoid duplicate work.
 
-## Building and testing
+## No GitHub Actions / CI — verify locally before opening a PR
 
-Once the Rust workspace is bootstrapped (see issue #1), the standard commands will be:
+This project intentionally does **not** run GitHub Actions or any hosted CI. All verification is local, and it's the author's/reviewer's responsibility to run it before pushing or merging. Before opening (or merging) a PR, run:
 
 ```bash
 cargo build --workspace
 cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
 ```
 
-This section will be expanded as the workspace and per-platform projects are added.
+All four must pass on your machine. There is no automated safety net catching regressions after the fact, so treat this as a hard requirement, not a suggestion.
+
+**Cross-platform code**: the core crate has platform-specific adapters (`core/src/platform/{macos,windows,linux}.rs`) and OS-specific behavior in `lifecycle.rs`. Without CI, code for a platform you're not running locally can only be compile-checked, not test-verified — call this out explicitly in your PR description (e.g. "Windows-specific changes, only compile-checked on macOS, needs a Windows run before merging") so reviewers know what's actually been exercised.
 
 ## Branch naming
 

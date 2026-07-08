@@ -1,7 +1,5 @@
 # Genjux-Store
 
-[![CI](https://github.com/PetrGuan/Genjux-Store/actions/workflows/ci.yml/badge.svg)](https://github.com/PetrGuan/Genjux-Store/actions/workflows/ci.yml)
-
 **Genjux-Store** is a cross-platform (macOS / Windows / Linux / Android) open-source software discovery & installation client. It aims to solve a common pain point: most projects hosted on open-source hubs like GitHub or Gitee lack a friendly, one-click install experience.
 
 ## Core idea
