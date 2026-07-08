@@ -12,7 +12,7 @@ Genjux-Store is developed in phases, tracked as [GitHub Milestones](https://gith
 
 ## Phase 0 — Core Service & CLI
 
-A cross-platform Rust core service exposing a local HTTP/JSON API and an MCP server, plus a CLI client. No native GUI yet. Goal: prove the discovery → classification → download → verify → install pipeline end-to-end against real open-source GitHub repos.
+A cross-platform Rust core service exposing a local HTTP/JSON API and an MCP server, plus a CLI client. No native GUI yet. Goal: prove the discovery → classification → download → verify → install pipeline end-to-end against real open-source GitHub repos. The release-fetching layer is built on a pluggable `SourceProvider` abstraction (GitHub first; Gitee/GitLab/Codeberg/GitCode/AtomGit reserved for later — see [#28](https://github.com/PetrGuan/Genjux-Store/issues/28)).
 
 Detailed sub-issues live in the [Phase 0 epic (#22)](https://github.com/PetrGuan/Genjux-Store/issues/22).
 
