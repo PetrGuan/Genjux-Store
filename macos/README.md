@@ -34,6 +34,17 @@ xcodegen generate
 xcodebuild -project GenjuxStore.xcodeproj -scheme GenjuxStore -configuration Debug test
 ```
 
+## Branding
+
+The app icon (`GenjuxStore/Assets.xcassets/AppIcon.appiconset/`) is generated, not hand-drawn in an image editor — [`design/make_icon.py`](design/make_icon.py) is a small Pillow script that renders a 1024×1024 master (indigo→violet gradient rounded-square field with a single white "install tray + downward arrow" glyph — no text, per Apple's Human Interface Guidelines) and resizes it into every size the asset catalog's `Contents.json` declares. Regenerate after any design tweak:
+
+```bash
+cd macos/design
+python3 make_icon.py   # writes icon-master.png + all AppIcon.appiconset/*.png
+cd ..
+xcodegen generate
+```
+
 ## Status
 
-Phase 1 is functionally complete for the "browse, install, and track" core loop — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the remaining sub-issue checklist (app icon/branding, code signing/notarization, end-to-end validation). Landed so far: the initial project scaffold (#58), the local core-service client + lazy-start (#59), the Home screen (#60, a real recommended-macOS-apps card grid backed by `GET /discover/macos`), the Search screen (#61, an `owner/repo` toolbar search field wired to `GET /repos/:owner/:repo/packages`), the App detail screen (#62, README excerpt/star count/last-release date via `GET /repos/:owner/:repo/metadata`), the Install progress screen (#63, a real `POST /install` + `GET /installs/:id` polling loop), and the Installed/updates screen (#64, a toolbar-accessible list backed by `GET /installed` + `GET /updates`).
+Phase 1 is functionally complete for the "browse, install, and track" core loop — see the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23) for the remaining sub-issue checklist (code signing/notarization, end-to-end validation). Landed so far: the initial project scaffold (#58), the local core-service client + lazy-start (#59), the Home screen (#60, a real recommended-macOS-apps card grid backed by `GET /discover/macos`), the Search screen (#61, an `owner/repo` toolbar search field wired to `GET /repos/:owner/:repo/packages`), the App detail screen (#62, README excerpt/star count/last-release date via `GET /repos/:owner/:repo/metadata`), the Install progress screen (#63, a real `POST /install` + `GET /installs/:id` polling loop), the Installed/updates screen (#64, a toolbar-accessible list backed by `GET /installed` + `GET /updates`), and the app icon/branding (#65).
