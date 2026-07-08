@@ -50,10 +50,18 @@ actor CoreServiceClient {
     /// Rust structs, whose field names are already snake_case (e.g.
     /// `download_url`), and un-renamed enum variants (e.g. `"MacOS"`) —
     /// see Models.swift's doc comment for how those map onto Swift.
-    func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+    ///
+    /// `timeout` defaults to `URLRequest`'s own default (60s), which is
+    /// far too short for `discover()` on a cold cache — a real,
+    /// uncached `GET /discover/macos` call fetches+classifies a release
+    /// per candidate repo and took ~2m51s in testing (see #55/#56).
+    /// Found via a real timeout while manually testing the Search screen
+    /// (#61) against a fresh runtime dir, not a hypothetical.
+    func get<T: Decodable>(_ path: String, as type: T.Type, timeout: TimeInterval = 60) async throws -> T {
         let info = try await serviceInfo()
         var request = URLRequest(url: baseURL(info).appendingPathComponent(path))
         request.setValue("Bearer \(info.token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = timeout
 
         let (data, response) = try await session.data(for: request)
         try Self.checkResponse(response, data: data)
@@ -73,8 +81,18 @@ actor CoreServiceClient {
     /// Calls `GET /discover/:platform` (#54-#56) — the Home screen's
     /// (#60) recommended-software feed. `platform` defaults to `"macos"`
     /// since that's the only flagship platform this GUI targets so far.
+    /// Uses a generous 5-minute timeout: see `get`'s doc comment for why
+    /// the default 60s isn't enough for a cold cache.
     func discover(platform: String = "macos") async throws -> [RecommendedApp] {
-        try await get("/discover/\(platform)", as: [RecommendedApp].self)
+        try await get("/discover/\(platform)", as: [RecommendedApp].self, timeout: 300)
+    }
+
+    /// Calls `GET /repos/:owner/:repo/packages` (#4-#8) — every classified
+    /// release asset for an arbitrary repo, not limited to the curated
+    /// recommended feed. Backs the Search screen (#61)'s "install
+    /// anything on GitHub" escape hatch from the original product pitch.
+    func packages(owner: String, repo: String) async throws -> [InstallablePackage] {
+        try await get("/repos/\(owner)/\(repo)/packages", as: [InstallablePackage].self)
     }
 
     private static func checkResponse(_ response: URLResponse, data: Data) throws {
@@ -102,5 +120,16 @@ enum CoreServiceError: Error, LocalizedError {
         case .httpError(let status, let body):
             return "HTTP \(status): \(body)"
         }
+    }
+
+    /// Whether this error represents a "not found" response (404) — the
+    /// core service uses this for both "repo has no releases" and
+    /// "repo doesn't exist", which the Search screen (#61) treats the
+    /// same way: nothing installable here, not a real error.
+    var isNotFound: Bool {
+        if case .httpError(let status, _) = self, status == 404 {
+            return true
+        }
+        return false
     }
 }
