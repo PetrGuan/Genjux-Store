@@ -129,6 +129,41 @@ pub enum AcquireOutcome {
     AlreadyRunning(ServiceInfo),
 }
 
+/// Windows' raw `ERROR_LOCK_VIOLATION` code, returned by `LockFileEx`
+/// when a lock can't be acquired immediately.
+#[cfg(windows)]
+const ERROR_LOCK_VIOLATION: i32 = 33;
+
+/// Whether an [`io::Error`] from a failed `try_lock_exclusive` means "the
+/// lock is already held by someone else" (as opposed to some other,
+/// genuine failure).
+///
+/// This has to be checked differently per platform: on Unix, `fs4` surfaces
+/// this as `io::ErrorKind::WouldBlock` (from the underlying `EWOULDBLOCK`/
+/// `EAGAIN`), which Rust's stdlib recognizes and categorizes correctly. On
+/// Windows, `fs4` just returns `Error::last_os_error()` verbatim, and the
+/// raw OS code for a lock conflict (`ERROR_LOCK_VIOLATION` / 33) is *not*
+/// one of the codes Rust's stdlib maps to `WouldBlock` — it comes back as
+/// `ErrorKind::Uncategorized` instead. Checking only `WouldBlock` silently
+/// treated every "someone else holds the lock" case on Windows as a hard
+/// error instead of the expected `AlreadyRunning` outcome; confirmed via
+/// repeated real windows-latest CI failures while developing this
+/// feature, traced all the way down to `fs4`'s own Windows
+/// implementation (`Error::last_os_error()` after a failed
+/// `LockFileEx(..., LOCKFILE_FAIL_IMMEDIATELY)` call).
+fn is_lock_conflict(e: &io::Error) -> bool {
+    if e.kind() == io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        if e.raw_os_error() == Some(ERROR_LOCK_VIOLATION) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Tries to become the singleton instance. If another process already
 /// holds the lock, reads that process's published [`ServiceInfo`] instead
 /// of erroring — the expected, common case (a client lazily starting the
@@ -152,7 +187,7 @@ pub fn try_acquire_singleton_lock() -> Result<AcquireOutcome, LifecycleError> {
             lock_path,
             info_path,
         })),
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+        Err(e) if is_lock_conflict(&e) => {
             let contents = std::fs::read_to_string(&info_path)?;
             let info: ServiceInfo = serde_json::from_str(&contents)?;
             Ok(AcquireOutcome::AlreadyRunning(info))
