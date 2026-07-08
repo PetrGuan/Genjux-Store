@@ -1,8 +1,8 @@
 import Cocoa
 
 /// Root content view controller for the main window: swaps between the
-/// Home screen (#60) and Search results (#61) as its single child
-/// content view controller. Later issues (#62 app detail, #63 install
+/// Home screen (#60), Search results (#61), and App detail (#62) as its
+/// single child content view controller. Later issues (#63 install
 /// progress, #64 installed/updates) plug into this same mechanism. Built
 /// entirely in code, no Storyboards/XIBs.
 final class RootViewController: NSViewController {
@@ -18,7 +18,9 @@ final class RootViewController: NSViewController {
     }
 
     func showHome() {
-        setContent(HomeViewController())
+        let home = HomeViewController()
+        home.onAppSelected = { [weak self] app in self?.showDetail(for: app) }
+        setContent(home)
     }
 
     /// Parses `query` as `owner/repo` and shows the Search screen (#61)
@@ -44,6 +46,13 @@ final class RootViewController: NSViewController {
         let search = SearchViewController(owner: String(parts[0]), repo: String(parts[1]))
         search.onBackTapped = { [weak self] in self?.showHome() }
         setContent(search)
+    }
+
+    /// Shows the App detail screen (#62) for a Home-screen card.
+    private func showDetail(for app: RecommendedApp) {
+        let detail = AppDetailViewController(app: app)
+        detail.onBackTapped = { [weak self] in self?.showHome() }
+        setContent(detail)
     }
 
     private func setContent(_ child: NSViewController) {

@@ -8,9 +8,15 @@ final class AppCardItem: NSCollectionViewItem {
     private let starsLabel = NSTextField(labelWithString: "")
     private let descriptionLabel = NSTextField(wrappingLabelWithString: "")
     private let installButton = NSButton(title: "Install", target: nil, action: nil)
+    private let detailsButton = NSButton(title: "Details", target: nil, action: nil)
 
     private var owner: String?
     private var repo: String?
+    private var app: RecommendedApp?
+
+    /// Called when the user taps "Details" — `HomeViewController` wires
+    /// this to open the App detail screen (#62) for this card's app.
+    var onDetailsTapped: ((RecommendedApp) -> Void)?
 
     override func loadView() {
         let container = NSView()
@@ -37,10 +43,16 @@ final class AppCardItem: NSCollectionViewItem {
         installButton.action = #selector(installTapped)
         installButton.translatesAutoresizingMaskIntoConstraints = false
 
+        detailsButton.bezelStyle = .rounded
+        detailsButton.target = self
+        detailsButton.action = #selector(detailsTapped)
+        detailsButton.translatesAutoresizingMaskIntoConstraints = false
+
         container.addSubview(nameLabel)
         container.addSubview(starsLabel)
         container.addSubview(descriptionLabel)
         container.addSubview(installButton)
+        container.addSubview(detailsButton)
 
         NSLayoutConstraint.activate([
             nameLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
@@ -57,6 +69,9 @@ final class AppCardItem: NSCollectionViewItem {
 
             installButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             installButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+
+            detailsButton.leadingAnchor.constraint(equalTo: installButton.trailingAnchor, constant: 8),
+            detailsButton.centerYAnchor.constraint(equalTo: installButton.centerYAnchor),
         ])
     }
 
@@ -64,6 +79,7 @@ final class AppCardItem: NSCollectionViewItem {
     /// item by `HomeViewController`'s `NSCollectionViewDataSource`, same
     /// as `UICollectionViewCell` reuse on iOS.
     func configure(with app: RecommendedApp) {
+        self.app = app
         owner = app.owner
         repo = app.repo
         nameLabel.stringValue = "\(app.owner)/\(app.repo)"
@@ -87,5 +103,12 @@ final class AppCardItem: NSCollectionViewItem {
         alert.informativeText = "The install flow isn't implemented yet — see issue #63."
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc private func detailsTapped() {
+        guard let app else {
+            return
+        }
+        onDetailsTapped?(app)
     }
 }

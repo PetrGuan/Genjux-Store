@@ -66,3 +66,12 @@ struct RecommendedApp: Codable, Equatable, Identifiable {
 
     var id: String { "\(owner)/\(repo)" }
 }
+
+/// Mirrors `genjux_core::source::github::RepoMetadata` (#57) — README
+/// excerpt/star count/last-release date for the App detail screen (#62).
+struct RepoMetadata: Codable, Equatable {
+    let stars: UInt64
+    let description: String?
+    let lastReleaseAt: String?
+    let readmeExcerpt: String?
+}
