@@ -225,6 +225,15 @@ mod tests {
     use super::*;
     use tokio::process::Command as TokioCommand;
 
+    /// Serializes the tests below that invoke `hdiutil attach`/`detach`.
+    /// Running two disk-image attach operations concurrently in the same
+    /// process was observed to intermittently fail with "Resource
+    /// temporarily unavailable" — a real flakiness source in DiskArbitration
+    /// contention, not a bug in the adapter itself. Holding this lock across
+    /// each full test (attach through detach) trades a little test wall
+    /// time for a CI signal that's actually trustworthy.
+    static DMG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     async fn build_test_dmg(dmg_path: &Path, include_app: bool) {
         let staging = tempfile::tempdir().unwrap();
         if include_app {
@@ -252,6 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn installs_app_bundle_from_a_real_dmg() {
+        let _guard = DMG_TEST_LOCK.lock().await;
         let workdir = tempfile::tempdir().unwrap();
         let dmg_path = workdir.path().join("test.dmg");
         build_test_dmg(&dmg_path, true).await;
@@ -272,6 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn dmg_with_no_app_bundle_fails_and_still_detaches() {
+        let _guard = DMG_TEST_LOCK.lock().await;
         let workdir = tempfile::tempdir().unwrap();
         let dmg_path = workdir.path().join("test.dmg");
         build_test_dmg(&dmg_path, false).await;

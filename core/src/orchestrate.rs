@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 /// One stage of an in-progress (or finished) install. Emitted via the
 /// `on_stage` callback passed to [`run_install`] so a caller (the HTTP/MCP
 /// API layer, in later issues) can stream progress to clients.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "stage")]
 pub enum InstallStage {
     Resolving,
     Downloading {
@@ -136,8 +137,8 @@ pub async fn run_install<P, A, F>(
     mut on_stage: F,
 ) -> Result<(), InstallError>
 where
-    P: SourceProvider,
-    A: PlatformAdapter,
+    P: SourceProvider + ?Sized,
+    A: PlatformAdapter + ?Sized,
     F: FnMut(InstallStage),
 {
     match run_install_inner(provider, repo, dest_dir, adapter, &mut on_stage).await {
@@ -162,8 +163,8 @@ async fn run_install_inner<P, A, F>(
     on_stage: &mut F,
 ) -> Result<(), InstallError>
 where
-    P: SourceProvider,
-    A: PlatformAdapter,
+    P: SourceProvider + ?Sized,
+    A: PlatformAdapter + ?Sized,
     F: FnMut(InstallStage),
 {
     on_stage(InstallStage::Resolving);
