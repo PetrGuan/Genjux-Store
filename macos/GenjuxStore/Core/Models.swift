@@ -152,3 +152,31 @@ extension InstallStage: Decodable {
 struct InstallStarted: Decodable {
     let installId: String
 }
+
+/// Mirrors `genjux_core::source::RepoRef`.
+struct RepoRef: Codable, Equatable {
+    let provider: String
+    let owner: String
+    let repo: String
+}
+
+/// Mirrors `genjux_core::registry::InstalledEntry` (#15) — one row in the
+/// Installed/updates screen (#64).
+struct InstalledEntry: Codable, Equatable, Identifiable {
+    let repo: RepoRef
+    let installedTag: String
+    /// Unix epoch seconds, as the Rust side stores it (no date/time
+    /// crate pulled in there either — see registry.rs's own comment).
+    let installedAtUnix: UInt64
+    let sourceUrl: String
+
+    var id: String { "\(repo.provider)/\(repo.owner)/\(repo.repo)" }
+}
+
+/// Mirrors `genjux_core::registry::UpdateCheckResult` (#15).
+struct UpdateCheckResult: Codable, Equatable {
+    let repo: RepoRef
+    let installedTag: String
+    let latestTag: String
+    let updateAvailable: Bool
+}

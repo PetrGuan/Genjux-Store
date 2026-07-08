@@ -111,6 +111,20 @@ final class CoreServiceClientTests: XCTestCase {
         XCTAssertEqual(httpResponse.statusCode, 401)
     }
 
+    func testInstalledListStartsEmptyForAFreshRuntimeDir() async throws {
+        // No network dependency: a fresh runtime dir's registry has
+        // nothing in it, so this doesn't even need to reach GitHub.
+        let client = CoreServiceClient.makeForTesting()
+        let installed = try await client.installed()
+        XCTAssertTrue(installed.isEmpty)
+    }
+
+    func testUpdatesListStartsEmptyForAFreshRuntimeDir() async throws {
+        let client = CoreServiceClient.makeForTesting()
+        let updates = try await client.updates()
+        XCTAssertTrue(updates.isEmpty)
+    }
+
     func testPackagesLookupReturnsClassifiedAssetsForARealRepo() async throws {
         // Hits the real GitHub API (via the real genjuxd) for a
         // well-known repo with real macOS/Windows/Linux release assets —
