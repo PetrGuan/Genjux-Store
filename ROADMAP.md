@@ -6,8 +6,8 @@ Confirmed platform development order: **macOS → Windows → Android → Linux*
 
 | Phase | Milestone | Epic | Status |
 |---|---|---|---|
-| 0 | [Core Service & CLI](https://github.com/PetrGuan/Genjux-Store/milestone/1) | [#22](https://github.com/PetrGuan/Genjux-Store/issues/22) | In progress |
-| 1 | [macOS Desktop GUI](https://github.com/PetrGuan/Genjux-Store/milestone/2) | [#23](https://github.com/PetrGuan/Genjux-Store/issues/23) | Blocked on Phase 0 |
+| 0 | [Core Service & CLI](https://github.com/PetrGuan/Genjux-Store/milestone/1) | [#22](https://github.com/PetrGuan/Genjux-Store/issues/22) | Done |
+| 1 | [macOS Desktop GUI](https://github.com/PetrGuan/Genjux-Store/milestone/2) | [#23](https://github.com/PetrGuan/Genjux-Store/issues/23) | In progress |
 | 2 | [Windows Desktop GUI](https://github.com/PetrGuan/Genjux-Store/milestone/3) | [#24](https://github.com/PetrGuan/Genjux-Store/issues/24) | Not started |
 | 3 | [Android](https://github.com/PetrGuan/Genjux-Store/milestone/4) | [#25](https://github.com/PetrGuan/Genjux-Store/issues/25) | Not started |
 | 4 | [Linux Desktop](https://github.com/PetrGuan/Genjux-Store/milestone/5) | [#26](https://github.com/PetrGuan/Genjux-Store/issues/26) | Not started |
@@ -21,6 +21,10 @@ Detailed sub-issues live in the [Phase 0 epic (#22)](https://github.com/PetrGuan
 ## Phase 1 — macOS Desktop GUI
 
 Confirmed as the flagship platform. Native GUI in AppKit (imperative style, no SwiftUI), talking to the core service over the local HTTP API. Distributed directly (notarized download), not through the Mac App Store — see PLAN.md's distribution-channel decision.
+
+The recommended-software feed is auto-discovered (GitHub Search API by topic, filtered through the existing `classify_release` pipeline to guarantee at least one real installable macOS asset, cached with a TTL), not hand-curated — see PLAN.md section 6.1.
+
+Detailed sub-issues live in the [Phase 1 epic (#23)](https://github.com/PetrGuan/Genjux-Store/issues/23).
 
 ## Phase 2 — Windows Desktop GUI
 
