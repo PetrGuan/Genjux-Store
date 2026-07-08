@@ -163,6 +163,46 @@ final class CoreServiceClientTests: XCTestCase {
         }
     }
 
+    func testStartInstallForANonexistentRepoReachesFailedStage() async throws {
+        // Deliberately only exercises the Resolving -> Failed path (the
+        // repo doesn't exist, so resolving its latest release fails
+        // immediately) -- never reaches Downloading/Installing. The real
+        // macOS install adapter's .pkg path runs the actual system
+        // `installer` command (core/src/platform/macos.rs), so a real
+        // *successful* end-to-end install isn't something to trigger
+        // from an automated test; this still verifies the real
+        // POST /install -> GET /installs/:id round trip and InstallStage
+        // JSON decoding against the real service (see InstallStageTests
+        // for synthetic coverage of every other stage shape).
+        let client = CoreServiceClient.makeForTesting()
+
+        do {
+            let installId = try await client.startInstall(
+                owner: "genjux-store-test-fixture",
+                repo: "does-not-exist-12345"
+            )
+            XCTAssertFalse(installId.isEmpty)
+
+            let deadline = Date().addingTimeInterval(15)
+            var lastStage: InstallStage = .resolving
+            while Date() < deadline {
+                lastStage = try await client.installStatus(id: installId)
+                if lastStage.isTerminal {
+                    break
+                }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+
+            guard case .failed = lastStage else {
+                XCTFail("expected a Failed stage for a nonexistent repo, got \(lastStage)")
+                return
+            }
+        } catch let error as CoreServiceError {
+            try Self.skipIfRateLimited(error)
+            throw error
+        }
+    }
+
     /// GitHub's real, shared, unauthenticated rate limit (60/hour) can
     /// genuinely be exhausted by heavy local iteration across this whole
     /// test file (each test spawns its own genjuxd and makes real

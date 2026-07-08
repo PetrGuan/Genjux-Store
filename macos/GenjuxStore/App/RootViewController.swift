@@ -1,9 +1,9 @@
 import Cocoa
 
 /// Root content view controller for the main window: swaps between the
-/// Home screen (#60), Search results (#61), and App detail (#62) as its
-/// single child content view controller. Later issues (#63 install
-/// progress, #64 installed/updates) plug into this same mechanism. Built
+/// Home screen (#60), Search results (#61), App detail (#62), and Install
+/// progress (#63) as its single child content view controller. Later
+/// issues (#64 installed/updates) plug into this same mechanism. Built
 /// entirely in code, no Storyboards/XIBs.
 final class RootViewController: NSViewController {
     private var currentChild: NSViewController?
@@ -20,6 +20,7 @@ final class RootViewController: NSViewController {
     func showHome() {
         let home = HomeViewController()
         home.onAppSelected = { [weak self] app in self?.showDetail(for: app) }
+        home.onInstallRequested = { [weak self] app in self?.showInstall(owner: app.owner, repo: app.repo) }
         setContent(home)
     }
 
@@ -52,7 +53,15 @@ final class RootViewController: NSViewController {
     private func showDetail(for app: RecommendedApp) {
         let detail = AppDetailViewController(app: app)
         detail.onBackTapped = { [weak self] in self?.showHome() }
+        detail.onInstallTapped = { [weak self] app in self?.showInstall(owner: app.owner, repo: app.repo) }
         setContent(detail)
+    }
+
+    /// Shows the Install progress screen (#63) for `owner/repo`.
+    private func showInstall(owner: String, repo: String) {
+        let install = InstallProgressViewController(owner: owner, repo: repo)
+        install.onBackTapped = { [weak self] in self?.showHome() }
+        setContent(install)
     }
 
     private func setContent(_ child: NSViewController) {
