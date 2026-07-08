@@ -30,6 +30,16 @@ All four must pass on your machine. There is no automated safety net catching re
 
 **Cross-platform code**: the core crate has platform-specific adapters (`core/src/platform/{macos,windows,linux}.rs`) and OS-specific behavior in `lifecycle.rs`. Without CI, code for a platform you're not running locally can only be compile-checked, not test-verified — call this out explicitly in your PR description (e.g. "Windows-specific changes, only compile-checked on macOS, needs a Windows run before merging") so reviewers know what's actually been exercised.
 
+## Real-repo validation harness
+
+`core/tests/e2e_real_repos.rs` runs the classification pipeline against a curated set of real public GitHub repos (clean per-platform naming, ambiguous names needing tier-2 keyword matching, missing/combined checksums, and the `genjux.yaml` override path). It hits the real GitHub API and CDN, so its tests are `#[ignore]`d and excluded from the default `cargo test --workspace`. Run it before cutting a Phase 0 milestone release:
+
+```bash
+cargo test -p genjux-core --test e2e_real_repos -- --ignored --test-threads=1
+```
+
+Any classification bug it finds against a curated repo should become its own tracked issue (see #51 for an example), not a special case bolted onto the harness or the classifier.
+
 ## Branch naming
 
 Use `<type>/<short-description>`, e.g. `feat/release-classification`, `fix/download-resume`, `docs/roadmap`.
