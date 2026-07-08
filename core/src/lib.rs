@@ -14,6 +14,7 @@ pub mod curator;
 pub mod download;
 pub mod package;
 pub mod source;
+pub mod verify;
 
 /// Returns the core crate's version, as set by Cargo at build time.
 pub fn version() -> &'static str {
