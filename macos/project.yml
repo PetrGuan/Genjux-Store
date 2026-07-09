@@ -37,6 +37,36 @@ targets:
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MACOSX_DEPLOYMENT_TARGET: "13.0"
+    postCompileScripts:
+      - name: "Embed genjuxd (dev builds only)"
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(BUILT_PRODUCTS_DIR)/$(EXECUTABLE_FOLDER_PATH)/genjuxd
+        script: |
+          set -e
+          # Release distribution builds embed a cross-compiled universal
+          # genjuxd via macos/scripts/build-release.sh (#66) instead --
+          # this phase only exists so a plain Cmd+R Debug run in Xcode has
+          # a genjuxd to find (ServiceLifecycle.swift's locateGenjuxd()
+          # looks in Contents/MacOS/genjuxd first). Deliberately does NOT
+          # invoke `cargo build` itself: with ENABLE_USER_SCRIPT_SANDBOXING
+          # on, the script phase sandbox denies cargo's writes to
+          # ~/.cargo / ../target (only the declared outputFiles path
+          # above is allowed) -- so this just copies whatever's already
+          # been built, per the existing `cargo build --bin genjuxd`
+          # first step documented in macos/README.md.
+          if [ "$CONFIGURATION" != "Debug" ]; then
+            echo "Skipping dev genjuxd embed for $CONFIGURATION (see macos/scripts/build-release.sh for release builds)."
+            exit 0
+          fi
+          SRC="$SRCROOT/../target/debug/genjuxd"
+          DEST="$BUILT_PRODUCTS_DIR/$EXECUTABLE_FOLDER_PATH/genjuxd"
+          if [ ! -f "$SRC" ]; then
+            echo "warning: $SRC not found -- run 'cargo build --bin genjuxd' from the repo root first. The app will build, but recommended-apps/install/etc. will fail until genjuxd is built and this target is rebuilt."
+            exit 0
+          fi
+          cp "$SRC" "$DEST"
+          chmod +x "$DEST"
   GenjuxStoreTests:
     type: bundle.unit-test
     platform: macOS
