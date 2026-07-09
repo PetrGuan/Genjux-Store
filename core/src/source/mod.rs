@@ -77,7 +77,7 @@ pub enum SourceError {
         message: String,
     },
 
-    #[error("rate limited by {provider}, retry after {retry_after_secs:?} seconds")]
+    #[error("rate limited by {provider}, retry after {}", format_retry_after(*retry_after_secs))]
     RateLimited {
         provider: &'static str,
         retry_after_secs: Option<u64>,
@@ -91,6 +91,21 @@ pub enum SourceError {
         provider: &'static str,
         message: String,
     },
+}
+
+/// Renders an optional retry-after duration for rate-limit error messages
+/// (e.g. "retry after 30 seconds" vs. "retry after an unspecified delay").
+/// Shared by [`SourceError::RateLimited`] and
+/// [`crate::discovery::DiscoveryError::RateLimited`] so both render the
+/// same way, rather than each independently formatting (or, as shipped
+/// briefly in production, forgetting to format) the `None` case -- a bare
+/// `{:?}` on the `Option<u64>` printed the literal string "None seconds"
+/// in a real user-facing error message.
+pub(crate) fn format_retry_after(retry_after_secs: Option<u64>) -> String {
+    match retry_after_secs {
+        Some(secs) => format!("{secs} seconds"),
+        None => "an unspecified delay".to_string(),
+    }
 }
 
 /// A source of releases for a given [`RepoRef`].
@@ -220,5 +235,36 @@ mod tests {
     fn repo_ref_display_format() {
         let repo = RepoRef::new("github", "acme", "widget");
         assert_eq!(repo.to_string(), "github:acme/widget");
+    }
+
+    /// Regression test for a real bug that shipped: `RateLimited`'s error
+    /// message used `{retry_after_secs:?}` (Debug) directly on the
+    /// `Option<u64>`, so a rate limit with no `Retry-After` header
+    /// produced the literal, nonsensical user-facing string "retry after
+    /// None seconds" -- seen for real in the macOS GUI's error banner.
+    #[test]
+    fn rate_limited_display_has_no_debug_formatting_artifacts() {
+        let with_delay = SourceError::RateLimited {
+            provider: "github",
+            retry_after_secs: Some(30),
+        };
+        assert_eq!(
+            with_delay.to_string(),
+            "rate limited by github, retry after 30 seconds"
+        );
+
+        let without_delay = SourceError::RateLimited {
+            provider: "github",
+            retry_after_secs: None,
+        };
+        let message = without_delay.to_string();
+        assert!(
+            !message.contains("None") && !message.contains("Some("),
+            "error message leaked Option's Debug formatting: {message:?}"
+        );
+        assert_eq!(
+            message,
+            "rate limited by github, retry after an unspecified delay"
+        );
     }
 }

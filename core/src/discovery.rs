@@ -41,7 +41,7 @@ pub struct DiscoveryCandidate {
 pub enum DiscoveryError {
     #[error("network error searching GitHub: {0}")]
     Network(String),
-    #[error("rate limited by GitHub search API, retry after {retry_after_secs:?} seconds")]
+    #[error("rate limited by GitHub search API, retry after {}", crate::source::format_retry_after(*retry_after_secs))]
     RateLimited { retry_after_secs: Option<u64> },
     #[error("GitHub search API returned an unexpected response: {0}")]
     Provider(String),
@@ -728,5 +728,36 @@ mod pipeline_tests {
         for app in &recommended {
             assert_eq!(app.package.classification.platform, Some(Platform::MacOS));
         }
+    }
+
+    /// Regression test for a real bug that shipped: `RateLimited`'s error
+    /// message used `{retry_after_secs:?}` (Debug) directly on the
+    /// `Option<u64>`, so a rate limit with no `Retry-After` header
+    /// produced the literal, nonsensical user-facing string "retry after
+    /// None seconds" -- seen for real in the macOS GUI's Home screen error
+    /// banner (surfaces verbatim via `SourceError`'s `Display`, see
+    /// api.rs's `e.to_string()` handling).
+    #[test]
+    fn rate_limited_display_has_no_debug_formatting_artifacts() {
+        let with_delay = DiscoveryError::RateLimited {
+            retry_after_secs: Some(30),
+        };
+        assert_eq!(
+            with_delay.to_string(),
+            "rate limited by GitHub search API, retry after 30 seconds"
+        );
+
+        let without_delay = DiscoveryError::RateLimited {
+            retry_after_secs: None,
+        };
+        let message = without_delay.to_string();
+        assert!(
+            !message.contains("None") && !message.contains("Some("),
+            "error message leaked Option's Debug formatting: {message:?}"
+        );
+        assert_eq!(
+            message,
+            "rate limited by GitHub search API, retry after an unspecified delay"
+        );
     }
 }
